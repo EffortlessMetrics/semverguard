@@ -1,0 +1,11 @@
+[package]
+name = "semverguard-git"
+version = "0.1.0"
+description = "Git adapter for semverguard (git CLI)."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+semverguard-domain = { path = "../semverguard-domain" }

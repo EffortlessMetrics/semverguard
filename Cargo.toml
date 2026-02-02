@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/semverguard-types",
+  "crates/semverguard-domain",
+  "crates/semverguard-workspace",
+  "crates/semverguard-git",
+  "crates/semverguard-engine",
+  "crates/semverguard-cli",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://example.invalid/semverguard"
+rust-version = "1.74"

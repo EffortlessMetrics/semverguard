@@ -1,0 +1,12 @@
+[package]
+name = "semverguard-engine"
+version = "0.1.0"
+description = "Engine adapter for semverguard (runs cargo-semver-checks)."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+semverguard-domain = { path = "../semverguard-domain" }
+semverguard-types = { path = "../semverguard-types" }

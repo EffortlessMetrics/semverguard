@@ -1,0 +1,13 @@
+[package]
+name = "semverguard-domain"
+version = "0.1.0"
+description = "Domain logic for semverguard."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+semverguard-types = { path = "../semverguard-types" }
+thiserror = "1"
+globset = "0.4"

@@ -1,0 +1,27 @@
+[baseline]
+kind = "git"
+rev = "origin/main"
+
+[scope]
+mode = "changed"
+include = ["*"]
+exclude = []
+skip_publish_false = true
+skip_no_lib = true
+
+[features]
+all_features = false
+default_features = true
+only_explicit_features = false
+features = []
+baseline_features = []
+current_features = []
+
+[engine]
+extra_args = []
+fail_fast = false
+
+[output]
+format = "both"
+json_path = "semverguard-report.json"
+pretty_json = true
