@@ -13,3 +13,6 @@ semverguard-types = { path = "../semverguard-types" }
 
 cargo_metadata = "0.18"
 semver = "1"
+
+[dev-dependencies]
+tempfile = "3"

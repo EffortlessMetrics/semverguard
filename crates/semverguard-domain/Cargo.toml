@@ -7,7 +7,15 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+## Enables mock implementations of port traits for testing.
+test-utils = []
+
 [dependencies]
 semverguard-types = { path = "../semverguard-types" }
 thiserror = "1"
 globset = "0.4"
+
+[dev-dependencies]
+semver = "1"
+serde_json = "1"

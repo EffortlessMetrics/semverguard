@@ -1,0 +1,8 @@
+[package]
+name = "registry-restricted-pkg"
+version = "3.0.0-alpha.1"
+edition = "2021"
+publish = ["my-private-registry"]
+
+[lib]
+path = "src/lib.rs"

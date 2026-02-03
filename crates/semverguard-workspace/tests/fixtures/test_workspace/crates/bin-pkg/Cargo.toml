@@ -1,0 +1,10 @@
+[package]
+name = "bin-pkg"
+version = "2.3.4"
+edition = "2021"
+
+# publish is unset, so it's publishable to any registry
+
+[[bin]]
+name = "bin-pkg"
+path = "src/main.rs"

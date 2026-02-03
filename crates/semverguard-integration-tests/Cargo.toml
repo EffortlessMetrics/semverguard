@@ -1,0 +1,19 @@
+[package]
+name = "semverguard-integration-tests"
+version = "0.1.0"
+description = "Integration tests for semverguard."
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+# This crate only has tests, no library
+path = "src/lib.rs"
+
+[dev-dependencies]
+semverguard-domain = { path = "../semverguard-domain", features = ["test-utils"] }
+semverguard-types = { path = "../semverguard-types" }
+semver = "1"
+serde_json = "1"

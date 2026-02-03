@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lib-pkg",
+    "crates/bin-pkg",
+    "crates/unpublishable-pkg",
+    "crates/registry-restricted-pkg",
+]

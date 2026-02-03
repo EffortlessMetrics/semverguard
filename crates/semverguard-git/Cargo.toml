@@ -9,3 +9,6 @@ rust-version.workspace = true
 
 [dependencies]
 semverguard-domain = { path = "../semverguard-domain" }
+
+[dev-dependencies]
+tempfile = "3"

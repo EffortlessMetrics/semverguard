@@ -10,7 +10,11 @@ use std::path::{Path, PathBuf};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 #[derive(Parser, Debug)]
-#[command(name = "semverguard", version, about = "Workspace orchestration for cargo-semver-checks")]
+#[command(
+    name = "semverguard",
+    version,
+    about = "Workspace orchestration for cargo-semver-checks"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Commands,
@@ -107,18 +111,22 @@ fn run() -> Result<()> {
 
     match cli.cmd {
         Commands::PrintConfig(args) => {
-            let cfg_path = args.config.unwrap_or_else(|| PathBuf::from("semverguard.toml"));
-            let mut config = load_config(&cfg_path)?;
+            let cfg_path = args
+                .config
+                .unwrap_or_else(|| PathBuf::from("semverguard.toml"));
+            let config = load_config(&cfg_path)?;
             // Nothing else to override (yet) besides ensuring workspace_root exists.
             ensure_workspace_root(&args.workspace_root)?;
             print_config(&config)?;
             Ok(())
         }
         Commands::Check(args) => {
-            let cfg_path = args.config.unwrap_or_else(|| PathBuf::from("semverguard.toml"));
+            let cfg_path = args
+                .config
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("semverguard.toml"));
             ensure_workspace_root(&args.workspace_root)?;
             let mut config = load_config(&cfg_path)?;
-
             apply_cli_overrides(&mut config, &args);
 
             // Wire adapters.
@@ -134,8 +142,12 @@ fn run() -> Result<()> {
 
             let report = RunReport {
                 semverguard_version: env!("CARGO_PKG_VERSION").to_string(),
-                started_at: started.format(&Rfc3339).unwrap_or_else(|_| started.unix_timestamp().to_string()),
-                finished_at: finished.format(&Rfc3339).unwrap_or_else(|_| finished.unix_timestamp().to_string()),
+                started_at: started
+                    .format(&Rfc3339)
+                    .unwrap_or_else(|_| started.unix_timestamp().to_string()),
+                finished_at: finished
+                    .format(&Rfc3339)
+                    .unwrap_or_else(|_| finished.unix_timestamp().to_string()),
                 workspace_root: artifacts.workspace_root,
                 packages: artifacts.packages,
                 summary: artifacts.summary,
@@ -154,10 +166,17 @@ fn run() -> Result<()> {
 }
 
 fn ensure_workspace_root(workspace_root: &Path) -> Result<()> {
-    let md = fs::metadata(workspace_root)
-        .with_context(|| format!("workspace root does not exist: {}", workspace_root.display()))?;
+    let md = fs::metadata(workspace_root).with_context(|| {
+        format!(
+            "workspace root does not exist: {}",
+            workspace_root.display()
+        )
+    })?;
     if !md.is_dir() {
-        anyhow::bail!("workspace root is not a directory: {}", workspace_root.display());
+        anyhow::bail!(
+            "workspace root is not a directory: {}",
+            workspace_root.display()
+        );
     }
     Ok(())
 }
@@ -168,8 +187,10 @@ fn load_config(path: &Path) -> Result<SemverguardConfig> {
         return Ok(SemverguardConfig::default());
     }
 
-    let raw = fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
-    let cfg: SemverguardConfig = toml::from_str(&raw).with_context(|| format!("invalid TOML in {}", path.display()))?;
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let cfg: SemverguardConfig =
+        toml::from_str(&raw).with_context(|| format!("invalid TOML in {}", path.display()))?;
     Ok(cfg)
 }
 
@@ -242,10 +263,20 @@ fn print_text(report: &RunReport) {
         match p.status {
             semverguard_types::PackageStatus::Passed => {}
             semverguard_types::PackageStatus::Skipped => {
-                println!("SKIP  {} {}  ({})", p.name, p.version, p.skip_reason.clone().unwrap_or_default());
+                println!(
+                    "SKIP  {} {}  ({})",
+                    p.name,
+                    p.version,
+                    p.skip_reason.clone().unwrap_or_default()
+                );
             }
             semverguard_types::PackageStatus::Failed => {
-                println!("FAIL  {} {}  {}", p.name, p.version, p.manifest_path.display());
+                println!(
+                    "FAIL  {} {}  {}",
+                    p.name,
+                    p.version,
+                    p.manifest_path.display()
+                );
                 if let Some(b) = p.inferred_required_bump {
                     println!("      inferred required bump: {:?}", b);
                 }
