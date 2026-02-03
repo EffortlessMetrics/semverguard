@@ -20,6 +20,8 @@ pub mod error;
 pub mod mocks;
 /// Port trait definitions for dependency injection.
 pub mod ports;
+/// Progress tracking types and traits.
+pub mod progress;
 /// The main orchestration runner.
 pub mod runner;
 
@@ -27,4 +29,5 @@ pub use error::*;
 #[cfg(any(test, feature = "test-utils"))]
 pub use mocks::*;
 pub use ports::*;
+pub use progress::*;
 pub use runner::*;

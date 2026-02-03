@@ -1,12 +1,17 @@
 [package]
 name = "semverguard-engine"
 version = "0.1.0"
-description = "Engine adapter for semverguard (runs cargo-semver-checks)."
+description = "Engine adapter for semverguard - executes cargo-semver-checks."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/semverguard-engine"
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
 
 [dependencies]
-semverguard-domain = { path = "../semverguard-domain" }
-semverguard-types = { path = "../semverguard-types" }
+semverguard-domain = { version = "0.1.0", path = "../semverguard-domain" }
+semverguard-types = { version = "0.1.0", path = "../semverguard-types" }

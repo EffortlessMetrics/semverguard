@@ -1,20 +1,26 @@
 [package]
 name = "semverguard-domain"
 version = "0.1.0"
-description = "Domain logic for semverguard."
+description = "Domain logic and port traits for semverguard - pure orchestration layer."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/semverguard-domain"
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
 
 [features]
 ## Enables mock implementations of port traits for testing.
 test-utils = []
 
 [dependencies]
-semverguard-types = { path = "../semverguard-types" }
+semverguard-types = { version = "0.1.0", path = "../semverguard-types" }
 thiserror = "1"
 globset = "0.4"
+rayon = "1"
 
 [dev-dependencies]
 semver = "1"

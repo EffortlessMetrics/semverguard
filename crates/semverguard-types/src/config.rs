@@ -5,7 +5,7 @@ use std::path::PathBuf;
 ///
 /// Intended to be loaded from `semverguard.toml`, with CLI flags overriding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SemverguardConfig {
     /// Baseline selection for the SemVer comparison.
     pub baseline: BaselineConfig,
@@ -62,7 +62,7 @@ impl Default for BaselineKind {
 /// - `--baseline-root`
 /// - `--baseline-rustdoc`
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct BaselineConfig {
     /// How to interpret the baseline fields.
     pub kind: BaselineKind,
@@ -99,15 +99,23 @@ impl Default for BaselineConfig {
 
 /// Scoping configuration: which packages to run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ScopeConfig {
     /// Mode for selecting packages.
     pub mode: ScopeMode,
 
-    /// Include package-name globs. Empty means “include everything”.
+    /// Explicit package names to check. When non-empty, ONLY these packages are
+    /// checked (takes precedence over include/exclude globs).
+    ///
+    /// Typically set via CLI `--package` / `-p` flags rather than config file.
+    pub explicit_packages: Vec<String>,
+
+    /// Include package-name globs. Empty means "include everything".
+    /// Ignored when `explicit_packages` is non-empty.
     pub include: Vec<String>,
 
     /// Exclude package-name globs.
+    /// Ignored when `explicit_packages` is non-empty.
     pub exclude: Vec<String>,
 
     /// Skip packages with `publish = false` in Cargo.toml.
@@ -121,6 +129,7 @@ impl Default for ScopeConfig {
     fn default() -> Self {
         Self {
             mode: ScopeMode::Workspace,
+            explicit_packages: vec![],
             include: vec![],
             exclude: vec![],
             skip_publish_false: true,
@@ -152,7 +161,7 @@ impl Default for ScopeMode {
 /// These mirror the CLI flags of cargo-semver-checks. They are intentionally “flat” so that they
 /// remain stable even if cargo adds new combinators later.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct FeaturesConfig {
     /// Pass `--all-features`.
     pub all_features: bool,
@@ -188,7 +197,7 @@ impl Default for FeaturesConfig {
 
 /// Settings for invoking cargo-semver-checks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct EngineConfig {
     /// Which `cargo` binary to run.
     ///
@@ -200,6 +209,20 @@ pub struct EngineConfig {
 
     /// Stop after the first failure.
     pub fail_fast: bool,
+
+    /// Run package checks in parallel using rayon.
+    ///
+    /// When enabled, multiple packages are checked concurrently.
+    /// When `fail_fast` is also enabled, remaining parallel checks
+    /// will be cancelled on the first failure.
+    pub parallel: bool,
+
+    /// Dry run mode: build commands but do not execute them.
+    ///
+    /// When true, the engine will build the command that would be executed
+    /// and return it without actually running the subprocess. Useful for
+    /// CI debugging and verifying configuration.
+    pub dry_run: bool,
 }
 
 impl Default for EngineConfig {
@@ -208,12 +231,14 @@ impl Default for EngineConfig {
             cargo_bin: None,
             extra_args: vec![],
             fail_fast: false,
+            parallel: true,
+            dry_run: false,
         }
     }
 }
 
 /// Output format.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum OutputFormat {
     /// Human-readable summary to stdout.
@@ -222,6 +247,11 @@ pub enum OutputFormat {
     Json,
     /// Both text and JSON.
     Both,
+    /// SARIF (Static Analysis Results Interchange Format) output.
+    ///
+    /// Used for integration with security and code quality tools like GitHub Code Scanning,
+    /// VS Code SARIF Viewer, and other security analysis platforms.
+    Sarif,
 }
 
 impl Default for OutputFormat {
@@ -230,9 +260,85 @@ impl Default for OutputFormat {
     }
 }
 
+/// Color output choice for terminal rendering.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ColorChoice {
+    /// Automatically detect if terminal supports colors.
+    Auto,
+    /// Always use colors, even when output is redirected.
+    Always,
+    /// Never use colors.
+    Never,
+}
+
+impl Default for ColorChoice {
+    fn default() -> Self {
+        ColorChoice::Auto
+    }
+}
+
+/// Output verbosity level.
+///
+/// Controls how much detail is shown in output. Higher verbosity shows more information.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Verbosity {
+    /// Suppress non-essential output. Only output on failure.
+    /// Summary line only, no per-package details.
+    Quiet,
+    /// Default behavior. Summary + failed/skipped packages.
+    #[default]
+    Normal,
+    /// Show all packages including passed.
+    /// Show timing for each package.
+    /// Show full commands executed.
+    Verbose,
+    /// All verbose output plus full stdout/stderr from cargo-semver-checks.
+    /// Also shows config after CLI overrides applied.
+    Debug,
+}
+
+impl Verbosity {
+    /// Returns true if this verbosity level shows passed packages.
+    pub fn shows_passed(&self) -> bool {
+        matches!(self, Verbosity::Verbose | Verbosity::Debug)
+    }
+
+    /// Returns true if this verbosity level shows skipped packages.
+    pub fn shows_skipped(&self) -> bool {
+        !matches!(self, Verbosity::Quiet)
+    }
+
+    /// Returns true if this verbosity level shows timing information.
+    pub fn shows_timing(&self) -> bool {
+        matches!(self, Verbosity::Verbose | Verbosity::Debug)
+    }
+
+    /// Returns true if this verbosity level shows commands executed.
+    pub fn shows_commands(&self) -> bool {
+        matches!(self, Verbosity::Verbose | Verbosity::Debug)
+    }
+
+    /// Returns true if this verbosity level shows full engine output.
+    pub fn shows_full_output(&self) -> bool {
+        matches!(self, Verbosity::Debug)
+    }
+
+    /// Returns true if this verbosity level shows effective config.
+    pub fn shows_config(&self) -> bool {
+        matches!(self, Verbosity::Debug)
+    }
+
+    /// Returns true if this is quiet mode (suppress most output).
+    pub fn is_quiet(&self) -> bool {
+        matches!(self, Verbosity::Quiet)
+    }
+}
+
 /// Output/reporting configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct OutputConfig {
     /// Which formats to emit.
     pub format: OutputFormat,
@@ -242,6 +348,12 @@ pub struct OutputConfig {
 
     /// Pretty-print the JSON report.
     pub pretty_json: bool,
+
+    /// Color output mode for terminal rendering.
+    pub color: ColorChoice,
+
+    /// Output verbosity level.
+    pub verbosity: Verbosity,
 }
 
 impl Default for OutputConfig {
@@ -250,6 +362,8 @@ impl Default for OutputConfig {
             format: OutputFormat::Text,
             json_path: None,
             pretty_json: true,
+            color: ColorChoice::Auto,
+            verbosity: Verbosity::Normal,
         }
     }
 }
@@ -319,6 +433,7 @@ mod tests {
         assert!(config.cargo_bin.is_none());
         assert!(config.extra_args.is_empty());
         assert!(!config.fail_fast);
+        assert!(config.parallel);
     }
 
     #[test]
@@ -403,6 +518,7 @@ mod tests {
             mode: ScopeMode::Changed,
             include: vec!["pkg-*".to_string(), "core".to_string()],
             exclude: vec!["test-*".to_string()],
+            explicit_packages: vec![],
             skip_publish_false: false,
             skip_no_lib: false,
         };
@@ -443,6 +559,8 @@ mod tests {
             cargo_bin: Some(PathBuf::from("/usr/bin/cargo")),
             extra_args: vec!["--verbose".to_string(), "--release".to_string()],
             fail_fast: true,
+            parallel: false,
+            dry_run: false,
         };
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: EngineConfig = serde_json::from_str(&json).unwrap();
@@ -453,6 +571,7 @@ mod tests {
         );
         assert_eq!(deserialized.extra_args, vec!["--verbose", "--release"]);
         assert!(deserialized.fail_fast);
+        assert!(!deserialized.parallel);
     }
 
     #[test]
@@ -475,6 +594,8 @@ mod tests {
             format: OutputFormat::Both,
             json_path: Some(PathBuf::from("/output/report.json")),
             pretty_json: false,
+            color: ColorChoice::Auto,
+            verbosity: Verbosity::Normal,
         };
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: OutputConfig = serde_json::from_str(&json).unwrap();

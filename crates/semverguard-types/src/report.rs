@@ -74,6 +74,41 @@ pub enum PackageStatus {
     Skipped,
 }
 
+/// Result of listing packages without running checks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListResult {
+    /// Workspace root directory.
+    pub workspace_root: PathBuf,
+    /// Packages that would be checked.
+    pub would_check: Vec<ListedPackage>,
+    /// Packages that would be skipped.
+    pub would_skip: Vec<SkippedPackage>,
+}
+
+/// A package that would be checked.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListedPackage {
+    /// Cargo package name.
+    pub name: String,
+    /// Cargo package version.
+    pub version: String,
+    /// Path to the package's `Cargo.toml`.
+    pub manifest_path: PathBuf,
+}
+
+/// A package that would be skipped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkippedPackage {
+    /// Cargo package name.
+    pub name: String,
+    /// Cargo package version.
+    pub version: String,
+    /// Path to the package's `Cargo.toml`.
+    pub manifest_path: PathBuf,
+    /// Why this package would be skipped.
+    pub reason: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

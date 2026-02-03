@@ -1,11 +1,14 @@
 use crate::error::{Result, SemverguardError};
 use crate::ports::{GitProvider, SemverEngine, WorkspaceProvider};
+use crate::progress::{NoopProgressCallback, ProgressCallback, ProgressEvent};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use semverguard_types::{
-    PackageReport, PackageStatus, SemverCheckRequest, Summary, WorkspaceMetadata, WorkspacePackage,
+    ListResult, ListedPackage, PackageReport, PackageStatus, SemverCheckRequest, SkippedPackage,
+    Summary, WorkspaceMetadata, WorkspacePackage,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// The output of a semverguard run (without timestamps/version decoration).
@@ -24,6 +27,7 @@ pub struct SemverguardRunner<'a> {
     workspace: &'a dyn WorkspaceProvider,
     git: Option<&'a dyn GitProvider>,
     engine: &'a dyn SemverEngine,
+    progress: Arc<dyn ProgressCallback>,
 }
 
 impl<'a> SemverguardRunner<'a> {
@@ -37,7 +41,28 @@ impl<'a> SemverguardRunner<'a> {
             workspace,
             git,
             engine,
+            progress: Arc::new(NoopProgressCallback),
         }
+    }
+
+    /// Create a new runner with a progress callback.
+    pub fn with_progress<P: ProgressCallback + 'static>(
+        workspace: &'a dyn WorkspaceProvider,
+        git: Option<&'a dyn GitProvider>,
+        engine: &'a dyn SemverEngine,
+        progress: P,
+    ) -> Self {
+        Self {
+            workspace,
+            git,
+            engine,
+            progress: Arc::new(progress),
+        }
+    }
+
+    /// Set the progress callback.
+    pub fn set_progress<P: ProgressCallback + 'static>(&mut self, progress: P) {
+        self.progress = Arc::new(progress);
     }
 
     /// Run semver checks.
@@ -47,27 +72,82 @@ impl<'a> SemverguardRunner<'a> {
         config: &semverguard_types::SemverguardConfig,
     ) -> Result<RunArtifacts> {
         let metadata = self.workspace.load(workspace_root)?;
-        let include_set = build_globset(&config.scope.include)?;
-        let exclude_set = build_globset(&config.scope.exclude)?;
 
         let mut reports: Vec<PackageReport> = Vec::new();
 
         // First pass: apply static filters (publishability, has-lib, name patterns).
+        // If explicit_packages is non-empty, it takes precedence over include/exclude globs.
         let mut eligible: Vec<WorkspacePackage> = Vec::new();
-        for pkg in &metadata.packages {
-            if !matches_name_filters(pkg, &include_set, &exclude_set) {
-                reports.push(skipped(pkg, "filtered by include/exclude patterns"));
-                continue;
+
+        if !config.scope.explicit_packages.is_empty() {
+            // Explicit package selection mode
+            let requested: HashSet<&str> = config
+                .scope
+                .explicit_packages
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
+            let available: HashSet<&str> =
+                metadata.packages.iter().map(|p| p.name.as_str()).collect();
+
+            // Warn about packages that don't exist in the workspace
+            let mut missing: Vec<&str> = Vec::new();
+            for name in &requested {
+                if !available.contains(name) {
+                    eprintln!(
+                        "warning: package '{}' not found in workspace (available: {:?})",
+                        name,
+                        available.iter().take(5).collect::<Vec<_>>()
+                    );
+                    missing.push(name);
+                }
             }
-            if config.scope.skip_publish_false && !pkg.publishable {
-                reports.push(skipped(pkg, "publish = false"));
-                continue;
+
+            // Error if ALL specified packages are missing
+            if missing.len() == requested.len() {
+                return Err(SemverguardError::InvalidConfig(format!(
+                    "none of the specified packages exist in workspace: {:?}",
+                    config.scope.explicit_packages
+                )));
             }
-            if config.scope.skip_no_lib && !pkg.has_lib {
-                reports.push(skipped(pkg, "no library target"));
-                continue;
+
+            for pkg in &metadata.packages {
+                if !requested.contains(pkg.name.as_str()) {
+                    // Not explicitly requested; skip silently (don't add to report)
+                    continue;
+                }
+
+                // Still apply publishability and has-lib filters unless forced
+                if config.scope.skip_publish_false && !pkg.publishable {
+                    reports.push(skipped(pkg, "publish = false"));
+                    continue;
+                }
+                if config.scope.skip_no_lib && !pkg.has_lib {
+                    reports.push(skipped(pkg, "no library target"));
+                    continue;
+                }
+                eligible.push(pkg.clone());
             }
-            eligible.push(pkg.clone());
+        } else {
+            // Standard glob-based filtering
+            let include_set = build_globset(&config.scope.include)?;
+            let exclude_set = build_globset(&config.scope.exclude)?;
+
+            for pkg in &metadata.packages {
+                if !matches_name_filters(pkg, &include_set, &exclude_set) {
+                    reports.push(skipped(pkg, "filtered by include/exclude patterns"));
+                    continue;
+                }
+                if config.scope.skip_publish_false && !pkg.publishable {
+                    reports.push(skipped(pkg, "publish = false"));
+                    continue;
+                }
+                if config.scope.skip_no_lib && !pkg.has_lib {
+                    reports.push(skipped(pkg, "no library target"));
+                    continue;
+                }
+                eligible.push(pkg.clone());
+            }
         }
 
         // Second pass: scope selection (changed vs workspace).
@@ -112,7 +192,17 @@ impl<'a> SemverguardRunner<'a> {
         };
 
         // Third pass: execute engine for each remaining eligible package.
-        for pkg in eligible {
+        let total = eligible.len();
+        self.progress
+            .on_progress(ProgressEvent::TotalPackages { total });
+
+        for (index, pkg) in eligible.into_iter().enumerate() {
+            self.progress.on_progress(ProgressEvent::PackageStarted {
+                name: pkg.name.clone(),
+                index,
+                total,
+            });
+
             let t0 = Instant::now();
 
             let request = SemverCheckRequest {
@@ -137,6 +227,12 @@ impl<'a> SemverguardRunner<'a> {
                         PackageStatus::Failed
                     };
 
+                    self.progress.on_progress(ProgressEvent::PackageCompleted {
+                        name: pkg.name.clone(),
+                        status: status.clone(),
+                        duration_ms,
+                    });
+
                     reports.push(PackageReport {
                         name: pkg.name.clone(),
                         version: pkg.version.to_string(),
@@ -154,6 +250,12 @@ impl<'a> SemverguardRunner<'a> {
                     }
                 }
                 Err(e) => {
+                    self.progress.on_progress(ProgressEvent::PackageCompleted {
+                        name: pkg.name.clone(),
+                        status: PackageStatus::Failed,
+                        duration_ms,
+                    });
+
                     reports.push(PackageReport {
                         name: pkg.name.clone(),
                         version: pkg.version.to_string(),
@@ -174,10 +276,125 @@ impl<'a> SemverguardRunner<'a> {
         }
 
         let summary = summarize(&reports);
+
+        self.progress.on_progress(ProgressEvent::Finished {
+            passed: summary.passed,
+            failed: summary.failed,
+            skipped: summary.skipped,
+        });
+
         Ok(RunArtifacts {
             workspace_root: metadata.workspace_root,
             packages: reports,
             summary,
+        })
+    }
+
+    /// List packages that would be checked without actually running checks.
+    ///
+    /// This performs the same filtering logic as `run()` (passes 1 and 2) but
+    /// does NOT invoke the engine. Useful for previewing what would be checked.
+    pub fn list_packages(
+        &self,
+        workspace_root: &Path,
+        config: &semverguard_types::SemverguardConfig,
+    ) -> Result<ListResult> {
+        let metadata = self.workspace.load(workspace_root)?;
+        let include_set = build_globset(&config.scope.include)?;
+        let exclude_set = build_globset(&config.scope.exclude)?;
+
+        let mut would_skip: Vec<SkippedPackage> = Vec::new();
+
+        // First pass: apply static filters (publishability, has-lib, name patterns).
+        let mut eligible: Vec<WorkspacePackage> = Vec::new();
+        for pkg in &metadata.packages {
+            if !matches_name_filters(pkg, &include_set, &exclude_set) {
+                would_skip.push(SkippedPackage {
+                    name: pkg.name.clone(),
+                    version: pkg.version.to_string(),
+                    manifest_path: pkg.manifest_path.clone(),
+                    reason: "filtered by include/exclude".to_string(),
+                });
+                continue;
+            }
+            if config.scope.skip_publish_false && !pkg.publishable {
+                would_skip.push(SkippedPackage {
+                    name: pkg.name.clone(),
+                    version: pkg.version.to_string(),
+                    manifest_path: pkg.manifest_path.clone(),
+                    reason: "publish = false".to_string(),
+                });
+                continue;
+            }
+            if config.scope.skip_no_lib && !pkg.has_lib {
+                would_skip.push(SkippedPackage {
+                    name: pkg.name.clone(),
+                    version: pkg.version.to_string(),
+                    manifest_path: pkg.manifest_path.clone(),
+                    reason: "no library target".to_string(),
+                });
+                continue;
+            }
+            eligible.push(pkg.clone());
+        }
+
+        // Second pass: scope selection (changed vs workspace).
+        let eligible = match config.scope.mode {
+            semverguard_types::ScopeMode::Workspace => eligible,
+            semverguard_types::ScopeMode::Changed => {
+                let baseline_rev = config.baseline.rev.as_deref().ok_or_else(|| {
+                    SemverguardError::InvalidConfig(
+                        "scope.mode=changed requires baseline.rev".into(),
+                    )
+                })?;
+
+                if !matches!(config.baseline.kind, semverguard_types::BaselineKind::Git) {
+                    return Err(SemverguardError::InvalidConfig(
+                        "scope.mode=changed requires baseline.kind = \"git\"".into(),
+                    ));
+                }
+
+                let git = self.git.ok_or_else(|| {
+                    SemverguardError::InvalidConfig(
+                        "scope.mode=changed requires a GitProvider".into(),
+                    )
+                })?;
+
+                let changed =
+                    changed_packages(&metadata, git, workspace_root, baseline_rev, "HEAD")?;
+
+                let mut scoped = Vec::new();
+                for pkg in eligible {
+                    if changed.contains(&pkg.name) {
+                        scoped.push(pkg);
+                    } else {
+                        // Not changed, record as skipped.
+                        would_skip.push(SkippedPackage {
+                            name: pkg.name.clone(),
+                            version: pkg.version.to_string(),
+                            manifest_path: pkg.manifest_path.clone(),
+                            reason: format!("unchanged relative to {baseline_rev}"),
+                        });
+                    }
+                }
+                scoped
+            }
+        };
+
+        // Convert eligible packages to ListedPackage.
+        let would_check: Vec<ListedPackage> = eligible
+            .into_iter()
+            .map(|pkg| ListedPackage {
+                name: pkg.name,
+                version: pkg.version.to_string(),
+                manifest_path: pkg.manifest_path,
+            })
+            .collect();
+
+        Ok(ListResult {
+            workspace_root: metadata.workspace_root,
+            would_check,
+            would_skip,
         })
     }
 }
@@ -508,6 +725,7 @@ mod tests {
                 mode: ScopeMode::Workspace,
                 include: vec![],
                 exclude: vec![],
+                explicit_packages: vec![],
                 skip_publish_false: false,
                 skip_no_lib: false,
             },

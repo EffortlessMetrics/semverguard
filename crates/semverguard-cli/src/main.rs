@@ -1,13 +1,20 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use globset::Glob;
 use semverguard_domain::SemverguardRunner;
 use semverguard_engine::CargoSemverChecksEngine;
 use semverguard_git::GitCli;
-use semverguard_types::{OutputFormat, RunReport, SemverguardConfig};
+use semverguard_types::{
+    BaselineKind, ListResult, OutputFormat, RunReport, ScopeMode, SemverguardConfig,
+};
 use semverguard_workspace::CargoMetadataWorkspace;
 use std::fs;
 use std::path::{Path, PathBuf};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+
+mod progress;
+mod sarif;
+use progress::{create_progress_reporter, ProgressCallbackAdapter, ProgressChoice};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -24,8 +31,12 @@ struct Cli {
 enum Commands {
     /// Run semver checks across the workspace.
     Check(CheckArgs),
+    /// List packages that would be checked without running checks.
+    List(ListArgs),
     /// Print the effective configuration (after file + CLI overrides).
     PrintConfig(PrintConfigArgs),
+    /// Validate the configuration file for errors and warnings.
+    ValidateConfig(ValidateConfigArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -36,6 +47,36 @@ struct PrintConfigArgs {
     /// Workspace root (defaults to .)
     #[arg(long, default_value = ".")]
     workspace_root: PathBuf,
+}
+
+#[derive(Parser, Debug)]
+struct ValidateConfigArgs {
+    /// Path to semverguard.toml (defaults to ./semverguard.toml)
+    #[arg(long)]
+    config: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug)]
+struct ListArgs {
+    /// Path to semverguard.toml (defaults to ./semverguard.toml)
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// Workspace root (defaults to .)
+    #[arg(long, default_value = ".")]
+    workspace_root: PathBuf,
+
+    /// Use git baseline selection (`--baseline-rev` passed to cargo-semver-checks).
+    #[arg(long)]
+    baseline_rev: Option<String>,
+
+    /// Only check packages changed relative to the baseline revision.
+    #[arg(long)]
+    changed: bool,
+
+    /// Output as JSON instead of text.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -60,9 +101,21 @@ struct CheckArgs {
     #[arg(long)]
     changed: bool,
 
+    /// Show what would be checked without actually running checks.
+    #[arg(long)]
+    dry_run: bool,
+
     /// Output JSON report to this path.
     #[arg(long)]
     json: Option<PathBuf>,
+
+    /// Output SARIF report to this path.
+    ///
+    /// SARIF (Static Analysis Results Interchange Format) is supported by GitHub
+    /// Code Scanning, VS Code SARIF Viewer, and other security analysis tools.
+    /// Equivalent to --format sarif --json <path>.
+    #[arg(long)]
+    sarif: Option<PathBuf>,
 
     /// Output format.
     #[arg(long, value_enum)]
@@ -79,6 +132,35 @@ struct CheckArgs {
     /// Extra args appended to `cargo semver-checks check-release` (repeatable).
     #[arg(long = "engine-arg")]
     engine_args: Vec<String>,
+
+    /// When to show progress indicators.
+    ///
+    /// "auto" shows a spinner and progress bar if stderr is a TTY.
+    /// "always" shows progress indicators even when output is redirected.
+    /// "never" disables progress indicators entirely.
+    #[arg(long, value_enum, default_value = "auto")]
+    progress: ProgressChoiceOpt,
+}
+
+/// Progress display choice for CLI.
+#[derive(Clone, Debug, ValueEnum)]
+enum ProgressChoiceOpt {
+    /// Automatically detect if terminal supports progress display (default).
+    Auto,
+    /// Always show progress, even when output is redirected.
+    Always,
+    /// Never show progress indicators.
+    Never,
+}
+
+impl From<ProgressChoiceOpt> for ProgressChoice {
+    fn from(v: ProgressChoiceOpt) -> Self {
+        match v {
+            ProgressChoiceOpt::Auto => ProgressChoice::Auto,
+            ProgressChoiceOpt::Always => ProgressChoice::Always,
+            ProgressChoiceOpt::Never => ProgressChoice::Never,
+        }
+    }
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -86,6 +168,8 @@ enum FormatOpt {
     Text,
     Json,
     Both,
+    /// SARIF (Static Analysis Results Interchange Format) for CI tools.
+    Sarif,
 }
 
 impl From<FormatOpt> for OutputFormat {
@@ -94,6 +178,7 @@ impl From<FormatOpt> for OutputFormat {
             FormatOpt::Text => OutputFormat::Text,
             FormatOpt::Json => OutputFormat::Json,
             FormatOpt::Both => OutputFormat::Both,
+            FormatOpt::Sarif => OutputFormat::Sarif,
         }
     }
 }
@@ -120,6 +205,14 @@ fn run() -> Result<()> {
             print_config(&config)?;
             Ok(())
         }
+        Commands::ValidateConfig(args) => {
+            run_validate_config(&args)?;
+            Ok(())
+        }
+        Commands::List(args) => {
+            run_list(&args)?;
+            Ok(())
+        }
         Commands::Check(args) => {
             let cfg_path = args
                 .config
@@ -134,7 +227,24 @@ fn run() -> Result<()> {
             let git = GitCli::default();
             let engine = CargoSemverChecksEngine::default();
 
-            let runner = SemverguardRunner::new(&workspace, Some(&git), &engine);
+            // Create progress reporter based on CLI flag
+            let progress_choice: ProgressChoice = args.progress.clone().into();
+            let progress_reporter = create_progress_reporter(progress_choice);
+            let progress_callback = ProgressCallbackAdapter::new(progress_reporter);
+
+            let runner = SemverguardRunner::with_progress(
+                &workspace,
+                Some(&git),
+                &engine,
+                progress_callback,
+            );
+
+            // Handle --dry-run: show what would be checked without actually running
+            if args.dry_run {
+                let list_result = runner.list_packages(&args.workspace_root, &config)?;
+                print_list_text(&list_result);
+                return Ok(());
+            }
 
             let started = OffsetDateTime::now_utc();
             let artifacts = runner.run(&args.workspace_root, &config)?;
@@ -235,6 +345,12 @@ fn apply_cli_overrides(cfg: &mut SemverguardConfig, args: &CheckArgs) {
             cfg.output.format = OutputFormat::Both;
         }
     }
+
+    // Handle --sarif shorthand flag (takes precedence over --json if both specified)
+    if let Some(sarif_path) = &args.sarif {
+        cfg.output.format = OutputFormat::Sarif;
+        cfg.output.json_path = Some(sarif_path.clone());
+    }
 }
 
 fn emit_outputs(cfg: &SemverguardConfig, report: &RunReport) -> Result<()> {
@@ -248,6 +364,9 @@ fn emit_outputs(cfg: &SemverguardConfig, report: &RunReport) -> Result<()> {
         OutputFormat::Both => {
             print_text(report);
             write_json(cfg, report)?;
+        }
+        OutputFormat::Sarif => {
+            write_sarif(cfg, report)?;
         }
     }
     Ok(())
@@ -312,6 +431,22 @@ fn write_json(cfg: &SemverguardConfig, report: &RunReport) -> Result<()> {
     Ok(())
 }
 
+fn write_sarif(cfg: &SemverguardConfig, report: &RunReport) -> Result<()> {
+    let sarif_log = sarif::report_to_sarif(report);
+    let json = sarif::sarif_to_json(&sarif_log, cfg.output.pretty_json)
+        .context("failed to serialize SARIF report")?;
+
+    match &cfg.output.json_path {
+        Some(path) => {
+            fs::write(path, json).with_context(|| format!("failed to write {}", path.display()))?;
+        }
+        None => {
+            println!("{json}");
+        }
+    }
+    Ok(())
+}
+
 fn tail_lines(s: &str, n: usize) -> String {
     let lines: Vec<&str> = s.lines().collect();
     let start = lines.len().saturating_sub(n);
@@ -323,4 +458,247 @@ fn indent(s: &str, prefix: &str) -> String {
         .map(|l| format!("{prefix}{l}"))
         .collect::<Vec<String>>()
         .join("\n")
+}
+
+// =============================================================================
+// Config Validation
+// =============================================================================
+
+struct ValidationResult {
+    errors: Vec<String>,
+    warnings: Vec<String>,
+}
+
+impl ValidationResult {
+    fn new() -> Self {
+        Self {
+            errors: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn add_error(&mut self, msg: impl Into<String>) {
+        self.errors.push(msg.into());
+    }
+
+    fn add_warning(&mut self, msg: impl Into<String>) {
+        self.warnings.push(msg.into());
+    }
+}
+
+fn run_validate_config(args: &ValidateConfigArgs) -> Result<()> {
+    let cfg_path = args
+        .config
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("semverguard.toml"));
+
+    if !cfg_path.exists() {
+        println!("Config file not found: {}", cfg_path.display());
+        println!("Using default configuration (which is valid).");
+        return Ok(());
+    }
+
+    let config = load_config(&cfg_path)?;
+    let result = validate_config(&config);
+
+    if result.errors.is_empty() && result.warnings.is_empty() {
+        println!("Configuration is valid: {}", cfg_path.display());
+        return Ok(());
+    }
+
+    if !result.warnings.is_empty() {
+        println!("Warnings:");
+        for warning in &result.warnings {
+            println!("  - {}", warning);
+        }
+    }
+
+    if !result.errors.is_empty() {
+        if !result.warnings.is_empty() {
+            println!();
+        }
+        println!("Errors:");
+        for error in &result.errors {
+            println!("  - {}", error);
+        }
+        anyhow::bail!(
+            "Configuration validation failed with {} error(s)",
+            result.errors.len()
+        );
+    }
+
+    Ok(())
+}
+
+fn validate_config(config: &SemverguardConfig) -> ValidationResult {
+    let mut result = ValidationResult::new();
+
+    // Validate glob patterns
+    for (i, pattern) in config.scope.include.iter().enumerate() {
+        if let Err(e) = Glob::new(pattern) {
+            result.add_error(format!(
+                "Invalid glob in scope.include[{}] \"{}\": {}",
+                i, pattern, e
+            ));
+        }
+    }
+
+    for (i, pattern) in config.scope.exclude.iter().enumerate() {
+        if let Err(e) = Glob::new(pattern) {
+            result.add_error(format!(
+                "Invalid glob in scope.exclude[{}] \"{}\": {}",
+                i, pattern, e
+            ));
+        }
+    }
+
+    // Validate baseline configuration
+    match config.baseline.kind {
+        BaselineKind::Git => {
+            if config.baseline.rev.is_none() {
+                result
+                    .add_error("baseline.kind is \"git\" but baseline.rev is not set".to_string());
+            }
+            if config.baseline.version.is_some() {
+                result.add_warning(
+                    "baseline.version is set but baseline.kind is \"git\"; version will be ignored"
+                        .to_string(),
+                );
+            }
+        }
+        BaselineKind::CratesIo => {
+            if config.baseline.rev.is_some() {
+                result.add_warning(
+                    "baseline.rev is set but baseline.kind is \"crates-io\"; rev will be ignored"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    // Validate scope mode consistency
+    if matches!(config.scope.mode, ScopeMode::Changed) {
+        if !matches!(config.baseline.kind, BaselineKind::Git) {
+            result.add_error(
+                "scope.mode is \"changed\" requires baseline.kind = \"git\"".to_string(),
+            );
+        }
+        if config.baseline.rev.is_none() {
+            result
+                .add_error("scope.mode is \"changed\" requires baseline.rev to be set".to_string());
+        }
+    }
+
+    // Validate file paths
+    if let Some(ref root) = config.baseline.root {
+        if !root.exists() {
+            result.add_error(format!("baseline.root does not exist: {}", root.display()));
+        } else if !root.is_dir() {
+            result.add_error(format!(
+                "baseline.root is not a directory: {}",
+                root.display()
+            ));
+        }
+    }
+
+    if let Some(ref rustdoc) = config.baseline.rustdoc {
+        if !rustdoc.exists() {
+            result.add_error(format!(
+                "baseline.rustdoc does not exist: {}",
+                rustdoc.display()
+            ));
+        } else if !rustdoc.is_file() {
+            result.add_error(format!(
+                "baseline.rustdoc is not a file: {}",
+                rustdoc.display()
+            ));
+        }
+    }
+
+    if let Some(ref cargo_bin) = config.engine.cargo_bin {
+        if !cargo_bin.exists() {
+            result.add_warning(format!(
+                "engine.cargo_bin does not exist: {}",
+                cargo_bin.display()
+            ));
+        }
+    }
+
+    // Validate features configuration
+    if config.features.all_features && config.features.only_explicit_features {
+        result.add_warning(
+            "all_features and only_explicit_features both true; all_features takes precedence"
+                .to_string(),
+        );
+    }
+
+    if config.features.only_explicit_features && config.features.features.is_empty() {
+        result.add_warning("only_explicit_features is true but features list is empty".to_string());
+    }
+
+    result
+}
+
+// =============================================================================
+// List Command
+// =============================================================================
+
+fn run_list(args: &ListArgs) -> Result<()> {
+    let cfg_path = args
+        .config
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("semverguard.toml"));
+    ensure_workspace_root(&args.workspace_root)?;
+    let mut config = load_config(&cfg_path)?;
+
+    // Apply CLI overrides for list command
+    if args.changed {
+        config.scope.mode = semverguard_types::ScopeMode::Changed;
+    }
+    if let Some(rev) = &args.baseline_rev {
+        config.baseline.kind = semverguard_types::BaselineKind::Git;
+        config.baseline.rev = Some(rev.clone());
+    }
+
+    // Wire adapters (we don't need engine for list)
+    let workspace = CargoMetadataWorkspace::default();
+    let git = GitCli::default();
+    let engine = CargoSemverChecksEngine::default();
+
+    let runner = SemverguardRunner::new(&workspace, Some(&git), &engine);
+    let list_result = runner.list_packages(&args.workspace_root, &config)?;
+
+    if args.json {
+        let json = serde_json::to_string_pretty(&list_result)?;
+        println!("{json}");
+    } else {
+        print_list_text(&list_result);
+    }
+
+    Ok(())
+}
+
+fn print_list_text(result: &ListResult) {
+    println!("Workspace: {}", result.workspace_root.display());
+    println!();
+
+    if !result.would_check.is_empty() {
+        println!("Would check ({} packages):", result.would_check.len());
+        for pkg in &result.would_check {
+            println!("  {} {}", pkg.name, pkg.version);
+        }
+    } else {
+        println!("Would check: (none)");
+    }
+
+    println!();
+
+    if !result.would_skip.is_empty() {
+        println!("Would skip ({} packages):", result.would_skip.len());
+        for pkg in &result.would_skip {
+            println!("  {} {} ({})", pkg.name, pkg.version, pkg.reason);
+        }
+    } else {
+        println!("Would skip: (none)");
+    }
 }

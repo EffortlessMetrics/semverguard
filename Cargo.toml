@@ -13,5 +13,9 @@ members = [
 [workspace.package]
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://example.invalid/semverguard"
+repository = "https://github.com/EffortlessMetrics/semverguard"
 rust-version = "1.74"
+homepage = "https://github.com/EffortlessMetrics/semverguard"
+documentation = "https://docs.rs/semverguard-cli"
+keywords = ["semver", "versioning", "semantic-versioning", "cargo", "ci"]
+categories = ["development-tools", "development-tools::cargo-plugins"]

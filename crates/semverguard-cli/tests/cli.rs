@@ -560,15 +560,15 @@ exclude = ["internal-*"]
     }
 
     #[test]
-    fn test_unknown_config_field_is_ignored() {
-        // Unknown fields are silently ignored by serde (no deny_unknown_fields)
+    fn test_unknown_config_field_returns_error() {
+        // Unknown fields cause errors due to deny_unknown_fields on config structs
         let temp_dir = TempDir::new().expect("failed to create temp dir");
         let config_path = temp_dir.path().join("semverguard.toml");
 
         let config_content = r#"
 [baseline]
 kind = "git"
-unknown_field = "should be ignored"
+unknown_field = "should cause error"
 "#;
         fs::write(&config_path, config_content).expect("failed to write");
 
@@ -578,8 +578,8 @@ unknown_field = "should be ignored"
             .arg("--workspace-root")
             .arg(temp_dir.path())
             .assert()
-            .success()
-            .stdout(predicate::str::contains("git"));
+            .failure()
+            .stderr(predicate::str::contains("unknown field"));
     }
 
     #[test]

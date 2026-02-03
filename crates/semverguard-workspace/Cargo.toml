@@ -1,15 +1,20 @@
 [package]
 name = "semverguard-workspace"
 version = "0.1.0"
-description = "Workspace adapter for semverguard (cargo metadata)."
+description = "Workspace adapter for semverguard - reads Cargo workspace via cargo_metadata."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/semverguard-workspace"
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
 
 [dependencies]
-semverguard-domain = { path = "../semverguard-domain" }
-semverguard-types = { path = "../semverguard-types" }
+semverguard-domain = { version = "0.1.0", path = "../semverguard-domain" }
+semverguard-types = { version = "0.1.0", path = "../semverguard-types" }
 
 cargo_metadata = "0.18"
 semver = "1"
