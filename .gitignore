@@ -5,3 +5,6 @@
 .vscode
 *.swp
 *.tmp
+
+# mdbook output
+docs/book/
