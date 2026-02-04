@@ -10,7 +10,8 @@ This crate implements the `SemverEngine` trait from `semverguard-domain`, provid
 
 - Construct `cargo semver-checks check-release` command arguments
 - Execute the check for individual packages
-- Parse and return results in semverguard's report format
+- Capture stdout/stderr and parse exit codes
+- Infer required version bump from output
 
 ## Usage
 
@@ -19,10 +20,31 @@ This crate is used internally by `semverguard-cli`:
 ```rust
 use semverguard_engine::CargoSemverChecksEngine;
 use semverguard_domain::SemverEngine;
+use semverguard_types::SemverCheckRequest;
 
-let engine = CargoSemverChecksEngine::new();
-let result = engine.check(&package, &config)?;
+let engine = CargoSemverChecksEngine::default();
+let (command, output) = engine.check(request)?;
 ```
+
+## Command Building
+
+The `build_command()` function is exported for testing command construction:
+
+```rust
+use semverguard_engine::CargoSemverChecksEngine;
+
+let args = CargoSemverChecksEngine::build_command(&request);
+// ["semver-checks", "check-release", "--manifest-path", ...]
+```
+
+## Baseline Flags
+
+| Config field | cargo-semver-checks flag |
+|--------------|--------------------------|
+| `git_rev` | `--baseline-rev` |
+| `crates_io_version` | `--baseline-version` |
+| `root_path` | `--baseline-root` |
+| `rustdoc_path` | `--baseline-rustdoc` |
 
 ## License
 

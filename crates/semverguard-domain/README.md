@@ -8,6 +8,7 @@ This crate contains:
 
 - **Port traits** (`WorkspaceProvider`, `GitProvider`, `SemverEngine`) - abstractions for external dependencies
 - **`SemverguardRunner`** - the main orchestrator that implements the three-pass filtering strategy
+- **Progress reporting** (`ProgressCallback`, `ProgressEvent`) - abstraction for UI progress updates
 - **Mock implementations** (behind `test-utils` feature) for testing
 
 ## Architecture
@@ -18,6 +19,22 @@ SemverguardRunner
        ├── WorkspaceProvider  ← semverguard-workspace adapter
        ├── GitProvider        ← semverguard-git adapter
        └── SemverEngine       ← semverguard-engine adapter
+```
+
+## Port Traits
+
+```rust
+pub trait WorkspaceProvider {
+    fn load(&self, workspace_root: &Path) -> Result<WorkspaceMetadata>;
+}
+
+pub trait GitProvider {
+    fn changed_paths(&self, workspace_root: &Path, base: &str, head: &str) -> Result<Vec<PathBuf>>;
+}
+
+pub trait SemverEngine {
+    fn check(&self, request: SemverCheckRequest) -> Result<(Vec<String>, SemverCheckOutput)>;
+}
 ```
 
 ## Three-Pass Filtering Strategy
@@ -32,9 +49,21 @@ This crate is typically used internally by `semverguard-cli`. If building a cust
 
 ```rust
 use semverguard_domain::{SemverguardRunner, WorkspaceProvider, GitProvider, SemverEngine};
+use semverguard_types::SemverguardConfig;
 
-let runner = SemverguardRunner::new(workspace, git, engine);
-let report = runner.run(&config)?;
+// Create adapters
+let workspace = MyWorkspaceProvider::new();
+let git = MyGitProvider::new();
+let engine = MyEngine::new();
+
+// Create runner
+let runner = SemverguardRunner::new(&workspace, Some(&git), &engine, &config);
+
+// Run checks
+let artifacts = runner.run()?;
+
+// Or preview without running
+let list_result = runner.list_packages()?;
 ```
 
 ## Features

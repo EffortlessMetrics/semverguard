@@ -118,7 +118,7 @@ Implements `WorkspaceProvider` by:
 
 Implements `GitProvider` by:
 
-1. Running `git diff --name-only <base>..<head>`
+1. Running `git diff --name-only <base>...<head>` (three-dot syntax for merge-base comparison)
 2. Parsing the output as file paths
 3. Returning workspace-relative paths
 
@@ -136,14 +136,22 @@ Implements `SemverEngine` by:
 
 **Binary entry point** that wires everything together.
 
+Subcommands:
+
+- **`check`**: Run semver checks across the workspace
+- **`list`**: Preview which packages would be checked (dry-run filtering)
+- **`print-config`**: Display resolved configuration
+- **`validate-config`**: Check config file for errors/warnings
+
 Responsibilities:
 
 1. Parse CLI arguments (clap)
 2. Load and merge configuration
 3. Instantiate adapters
 4. Create `SemverguardRunner` with adapters
-5. Execute run and format output
-6. Return appropriate exit code
+5. Execute run and format output (text, JSON, or SARIF)
+6. Display progress (spinner/progress bar) when running interactively
+7. Return appropriate exit code
 
 ## Why Hexagonal Architecture?
 

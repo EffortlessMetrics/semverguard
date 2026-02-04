@@ -8,9 +8,10 @@ This crate implements the `WorkspaceProvider` trait from `semverguard-domain`, p
 
 ## Responsibilities
 
-- Execute `cargo metadata` to discover workspace members
+- Execute `cargo metadata --format-version 1` to discover workspace members
 - Extract package metadata (name, version, publish settings, targets)
-- Provide package manifest paths for semver checking
+- Filter to workspace members only (exclude transitive dependencies)
+- Detect publishability and library targets
 
 ## Usage
 
@@ -19,10 +20,34 @@ This crate is used internally by `semverguard-cli`:
 ```rust
 use semverguard_workspace::CargoMetadataWorkspace;
 use semverguard_domain::WorkspaceProvider;
+use std::path::Path;
 
-let workspace = CargoMetadataWorkspace::from_path(".")?;
-let packages = workspace.packages();
+let workspace = CargoMetadataWorkspace::default();
+let metadata = workspace.load(Path::new("/path/to/workspace"))?;
+
+for pkg in &metadata.packages {
+    println!("{}: publishable={}, has_lib={}",
+        pkg.name, pkg.publishable, pkg.has_lib);
+}
 ```
+
+## Package Detection
+
+### Publishability
+
+| `Cargo.toml` setting | `publishable` |
+|---------------------|---------------|
+| `publish = false` | `false` |
+| `publish = ["registry"]` | `true` |
+| (unset) | `true` |
+
+### Library Target
+
+A package has `has_lib = true` if:
+- It has a `[lib]` target, OR
+- It's a proc-macro crate
+
+Binary-only crates have `has_lib = false` and are typically filtered out since they have no public API to check.
 
 ## License
 

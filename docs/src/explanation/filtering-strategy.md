@@ -26,6 +26,10 @@ This minimizes unnecessary work.
 
 These filters are applied first, using only information from workspace metadata.
 
+### Explicit Package Selection
+
+When specific packages are requested via CLI (e.g., `--package my-lib`), those packages take precedence over include/exclude patterns. Only the explicitly named packages are considered.
+
 ### Include/Exclude Patterns
 
 ```toml
@@ -63,9 +67,10 @@ Packages without a library target (`[lib]` in Cargo.toml) are skipped. Binary-on
 
 ### Filter Order in Pass 1
 
-1. Include/exclude patterns (package name)
-2. `skip_publish_false` (publishability)
-3. `skip_no_lib` (library target)
+1. Explicit package selection (`--package` takes precedence)
+2. Include/exclude patterns (package name)
+3. `skip_publish_false` (publishability)
+4. `skip_no_lib` (library target)
 
 The first matching filter determines the skip reason.
 
@@ -93,9 +98,11 @@ Only packages with changed files (relative to baseline) are checked.
 
 #### Change Detection Algorithm
 
-1. Get changed file paths via `git diff --name-only <baseline>..HEAD`
+1. Get changed file paths via `git diff --name-only <baseline>...HEAD` (three-dot syntax)
 2. For each changed path, find which package directory contains it
 3. Mark those packages as changed
+
+The three-dot syntax compares the merge-base to HEAD, matching typical PR semantics.
 
 ```
 Changed file: crates/my-lib/src/api.rs
@@ -143,6 +150,9 @@ When enabled, execution stops after the first failing package. Useful for quick 
 ┌─────────────────────────────────────────────────────────────┐
 │                    Pass 1: Static Filters                    │
 ├─────────────────────────────────────────────────────────────┤
+│  0. Explicit package selection (--package)                   │
+│     → Only named packages proceed (overrides include/exclude)│
+│                                                              │
 │  1. Include/exclude patterns                                 │
 │     → SKIP: "filtered by include/exclude patterns"           │
 │                                                              │

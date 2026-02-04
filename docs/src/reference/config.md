@@ -210,7 +210,7 @@ Controls output format and location.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `format` | `"text"` \| `"json"` \| `"both"` | `"text"` | Output format |
+| `format` | `"text"` \| `"json"` \| `"both"` \| `"sarif"` | `"text"` | Output format |
 | `json_path` | Path | — | JSON output file path |
 | `pretty_json` | bool | `true` | Pretty-print JSON |
 
@@ -219,6 +219,7 @@ Controls output format and location.
 - `"text"`: Human-readable summary to stdout
 - `"json"`: JSON report (to file or stdout)
 - `"both"`: Text to stdout and JSON to file
+- `"sarif"`: SARIF format for GitHub Code Scanning and security tools
 
 #### `json_path`
 

@@ -35,6 +35,18 @@ To only check crates changed relative to a git revision:
 cargo run -p semverguard-cli -- check --baseline-rev origin/main --changed
 ```
 
+Preview which packages would be checked:
+
+```bash
+cargo run -p semverguard-cli -- list
+```
+
+Generate SARIF output for GitHub Code Scanning:
+
+```bash
+cargo run -p semverguard-cli -- check --sarif results.sarif
+```
+
 ## Configuration
 
 By default, `semverguard` looks for `semverguard.toml` in the working directory.
@@ -111,6 +123,16 @@ GitHub Actions sketch:
   with:
     name: semverguard-report
     path: semverguard-report.json
+
+# Optional: Upload SARIF for GitHub Code Scanning
+- name: Run semverguard (SARIF)
+  run: cargo run -p semverguard-cli -- check --baseline-rev origin/main --changed --sarif results.sarif
+
+- name: Upload SARIF
+  if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: results.sarif
 ```
 
 ## Notes

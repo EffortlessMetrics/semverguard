@@ -26,9 +26,27 @@ semverguard check --baseline-rev origin/main --changed
 # Output JSON report
 semverguard check --json report.json
 
+# Output SARIF for GitHub Code Scanning
+semverguard check --sarif results.sarif
+
+# List packages that would be checked (preview filtering)
+semverguard list
+
 # Print effective configuration
 semverguard print-config
+
+# Validate configuration file
+semverguard validate-config
 ```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `check` | Run semver checks across the workspace |
+| `list` | List packages that would be checked (dry-run) |
+| `print-config` | Print the effective configuration |
+| `validate-config` | Validate config file for errors/warnings |
 
 ## Configuration
 

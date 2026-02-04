@@ -8,9 +8,11 @@ Complete reference for the semverguard command-line interface.
 semverguard <COMMAND>
 
 Commands:
-  check        Run semver checks across the workspace
-  print-config Print the effective configuration
-  help         Print help information
+  check           Run semver checks across the workspace
+  list            List packages that would be checked without running checks
+  print-config    Print the effective configuration
+  validate-config Validate the configuration file for errors and warnings
+  help            Print help information
 ```
 
 ## Global Options
@@ -40,10 +42,13 @@ semverguard check [OPTIONS]
 | `--baseline-version <VER>` | String | — | crates.io version for baseline (sets `kind = crates-io`) |
 | `--changed` | Flag | false | Only check packages changed relative to baseline |
 | `--json <PATH>` | Path | — | Write JSON report to this path |
-| `--format <FORMAT>` | Enum | `text` | Output format: `text`, `json`, or `both` |
+| `--format <FORMAT>` | Enum | `text` | Output format: `text`, `json`, `sarif`, or `both` |
+| `--sarif <PATH>` | Path | — | Write SARIF report to this path (for GitHub Code Scanning) |
 | `--fail-fast` | Flag | false | Stop after first failing package |
+| `--dry-run` | Flag | false | Show what would be checked without running checks |
 | `--cargo-bin <PATH>` | Path | `cargo` | Path to cargo binary |
 | `--engine-arg <ARG>` | String | — | Extra arg for cargo-semver-checks (repeatable) |
+| `--progress <WHEN>` | Enum | `auto` | Progress display: `auto`, `always`, or `never` |
 
 #### Examples
 
@@ -68,14 +73,53 @@ semverguard check --fail-fast --engine-arg --verbose
 
 # Use a custom cargo binary
 semverguard check --cargo-bin ~/.cargo/bin/cargo-nightly
+
+# Generate SARIF report for GitHub Code Scanning
+semverguard check --sarif semver-results.sarif
+
+# Preview what would be checked without running
+semverguard check --dry-run
 ```
 
 #### Behavior Notes
 
 - When `--json` is specified without `--format`, the format defaults to `both` (text + JSON)
+- `--sarif` is shorthand for `--format sarif --json <path>` (SARIF format for GitHub Code Scanning)
 - `--baseline-rev` and `--baseline-version` are mutually exclusive (last one wins)
 - `--changed` requires `--baseline-rev` (git baseline)
 - `--engine-arg` can be repeated: `--engine-arg --verbose --engine-arg --release`
+- `--progress auto` shows progress indicators only when stderr is a TTY
+
+### `semverguard list`
+
+List packages that would be checked without actually running checks. Useful for previewing filtering behavior.
+
+```
+semverguard list [OPTIONS]
+```
+
+#### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--config <PATH>` | Path | `./semverguard.toml` | Path to configuration file |
+| `--workspace-root <PATH>` | Path | `.` | Workspace root directory |
+| `--baseline-rev <REV>` | String | — | Git revision for baseline |
+| `--changed` | Flag | false | Only list packages changed relative to baseline |
+| `--json` | Flag | false | Output as JSON instead of text |
+
+#### Examples
+
+```bash
+# List all packages that would be checked
+semverguard list
+
+# List only changed packages
+semverguard list --changed --baseline-rev origin/main
+
+# Output as JSON for scripting
+semverguard list --json
+```
 
 ### `semverguard print-config`
 
@@ -100,6 +144,30 @@ semverguard print-config
 
 # Print config from a specific file
 semverguard print-config --config production.toml
+```
+
+### `semverguard validate-config`
+
+Validate the configuration file for errors and warnings without running any checks.
+
+```
+semverguard validate-config [OPTIONS]
+```
+
+#### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--config <PATH>` | Path | `./semverguard.toml` | Path to configuration file |
+
+#### Examples
+
+```bash
+# Validate default config file
+semverguard validate-config
+
+# Validate a specific config file
+semverguard validate-config --config ci-config.toml
 ```
 
 #### Output
