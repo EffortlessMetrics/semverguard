@@ -21,12 +21,17 @@ use semver::Version;
 use semverguard_domain::{
     MockGitProvider, MockSemverEngine, MockWorkspaceProvider, SemverguardRunner,
 };
+use semverguard_cli::receipt::{
+    build_artifact_index, build_receipt, exit_code_from_receipt, has_tool_error,
+    write_receipt_bundle, ToolErrorFinding,
+};
 use semverguard_types::{
     BaselineConfig, BaselineKind, EngineConfig, FeaturesConfig, OutputConfig, PackageStatus,
     RunReport, ScopeConfig, ScopeMode, SemverCheckOutput, SemverguardConfig, WorkspaceMetadata,
     WorkspacePackage,
 };
 use std::path::{Path, PathBuf};
+use tempfile::TempDir;
 
 // =============================================================================
 // Test Fixtures and Helpers
@@ -1087,4 +1092,74 @@ fn scenario_multiple_changed_packages() {
         .collect();
     assert!(checked_names.contains(&"changed-a"));
     assert!(checked_names.contains(&"changed-b"));
+}
+
+// =============================================================================
+// Scenario 6: Receipt + Exit Code Integration
+// =============================================================================
+
+#[test]
+fn scenario_tool_error_emits_receipt_bundle() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    let artifacts = build_artifact_index(temp_dir.path(), None, false);
+    let receipt = build_receipt(
+        None,
+        &[ToolErrorFinding::new("simulated tool failure")],
+        &artifacts,
+        &BaselineConfig::default(),
+    );
+
+    write_receipt_bundle(temp_dir.path(), &receipt, None, false, true)
+        .expect("failed to write receipt bundle");
+
+    assert!(temp_dir.path().join("report.json").exists());
+    assert!(temp_dir.path().join("comment.md").exists());
+}
+
+#[test]
+fn scenario_receipt_exit_codes_and_required_fields() {
+    let temp_dir = TempDir::new().expect("failed to create temp dir");
+
+    let report = RunReport {
+        semverguard_version: "0.1.0".to_string(),
+        started_at: "2024-01-15T10:00:00Z".to_string(),
+        finished_at: "2024-01-15T10:01:00Z".to_string(),
+        workspace_root: temp_dir.path().to_path_buf(),
+        packages: vec![semverguard_types::PackageReport {
+            name: "lib-a".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: temp_dir.path().join("Cargo.toml"),
+            status: PackageStatus::Failed,
+            skip_reason: None,
+            duration_ms: 10,
+            command: vec![],
+            engine: None,
+            inferred_required_bump: Some(semverguard_types::RequiredBump::Major),
+            failure_kind: Some(semverguard_types::FailureKind::SemverViolation),
+        }],
+        summary: semverguard_types::Summary {
+            total: 1,
+            passed: 0,
+            failed: 1,
+            skipped: 0,
+        },
+    };
+
+    let artifacts = build_artifact_index(temp_dir.path(), Some(&report), false);
+    let receipt = build_receipt(Some(&report), &[], &artifacts, &BaselineConfig::default());
+    let code = exit_code_from_receipt(
+        &receipt.verdict,
+        false,
+        has_tool_error(&receipt.findings),
+    );
+
+    assert_eq!(code, 2);
+
+    let json = serde_json::to_value(&receipt).expect("receipt should serialize");
+    assert!(json.get("schema").is_some());
+    assert!(json.get("tool").is_some());
+    assert!(json.get("run").and_then(|r| r.get("started_at")).is_some());
+    assert!(json.get("verdict").is_some());
+    assert!(json.get("findings").is_some());
 }

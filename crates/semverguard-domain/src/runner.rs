@@ -1,3 +1,4 @@
+use crate::classification::{classify_engine_error, classify_output};
 use crate::error::{Result, SemverguardError};
 use crate::ports::{GitProvider, SemverEngine, WorkspaceProvider};
 use crate::progress::{NoopProgressCallback, ProgressCallback, ProgressEvent};
@@ -233,6 +234,12 @@ impl<'a> SemverguardRunner<'a> {
                         duration_ms,
                     });
 
+                    let failure_kind = if success {
+                        None
+                    } else {
+                        Some(classify_output(&output))
+                    };
+
                     reports.push(PackageReport {
                         name: pkg.name.clone(),
                         version: pkg.version.to_string(),
@@ -243,6 +250,7 @@ impl<'a> SemverguardRunner<'a> {
                         command,
                         inferred_required_bump: output.required_bump,
                         engine: Some(output),
+                        failure_kind,
                     });
 
                     if !success && config.engine.fail_fast {
@@ -266,6 +274,7 @@ impl<'a> SemverguardRunner<'a> {
                         command: vec![],
                         inferred_required_bump: None,
                         engine: None,
+                        failure_kind: Some(classify_engine_error(&e)),
                     });
 
                     if config.engine.fail_fast {
@@ -442,6 +451,7 @@ fn skipped(pkg: &WorkspacePackage, reason: &str) -> PackageReport {
         command: vec![],
         inferred_required_bump: None,
         engine: None,
+        failure_kind: None,
     }
 }
 
@@ -547,9 +557,9 @@ mod tests {
     use super::*;
     use semver::Version;
     use semverguard_types::{
-        BaselineConfig, BaselineKind, EngineConfig, FeaturesConfig, OutputConfig, RequiredBump,
-        ScopeConfig, ScopeMode, SemverCheckOutput, SemverguardConfig, WorkspaceMetadata,
-        WorkspacePackage,
+        BaselineConfig, BaselineKind, EngineConfig, FailureKind, FeaturesConfig, OutputConfig,
+        RequiredBump, ScopeConfig, ScopeMode, SemverCheckOutput, SemverguardConfig,
+        WorkspaceMetadata, WorkspacePackage,
     };
     use std::cell::RefCell;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1971,6 +1981,7 @@ mod tests {
                 command: vec![],
                 engine: None,
                 inferred_required_bump: None,
+                failure_kind: None,
             },
             PackageReport {
                 name: "b".to_string(),
@@ -1982,6 +1993,7 @@ mod tests {
                 command: vec![],
                 engine: None,
                 inferred_required_bump: None,
+                failure_kind: None,
             },
         ];
         let summary = summarize(&reports);
@@ -2003,6 +2015,7 @@ mod tests {
             command: vec![],
             engine: None,
             inferred_required_bump: None,
+            failure_kind: Some(FailureKind::Unknown),
         }];
         let summary = summarize(&reports);
         assert_eq!(summary.total, 1);
@@ -2023,6 +2036,7 @@ mod tests {
             command: vec![],
             engine: None,
             inferred_required_bump: None,
+            failure_kind: None,
         }];
         let summary = summarize(&reports);
         assert_eq!(summary.total, 1);
@@ -2044,6 +2058,7 @@ mod tests {
                 command: vec![],
                 engine: None,
                 inferred_required_bump: None,
+                failure_kind: None,
             },
             PackageReport {
                 name: "b".to_string(),
@@ -2055,6 +2070,7 @@ mod tests {
                 command: vec![],
                 engine: None,
                 inferred_required_bump: None,
+                failure_kind: Some(FailureKind::Unknown),
             },
             PackageReport {
                 name: "c".to_string(),
@@ -2066,6 +2082,7 @@ mod tests {
                 command: vec![],
                 engine: None,
                 inferred_required_bump: None,
+                failure_kind: None,
             },
         ];
         let summary = summarize(&reports);

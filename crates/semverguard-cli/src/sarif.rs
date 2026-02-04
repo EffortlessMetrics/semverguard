@@ -6,7 +6,9 @@
 //!
 //! See: https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html
 
-use semverguard_types::{PackageReport, PackageStatus, RequiredBump, RunReport};
+use semverguard_types::{
+    FailureKind, Finding, PackageReport, PackageStatus, RequiredBump, RunReport, SensorReportV1,
+};
 use serde::Serialize;
 use std::path::Path;
 
@@ -241,6 +243,8 @@ const RULE_SEMVER_BREAKING: &str = "semverguard/breaking-change";
 const RULE_SEMVER_MAJOR_REQUIRED: &str = "semverguard/major-bump-required";
 const RULE_SEMVER_MINOR_REQUIRED: &str = "semverguard/minor-bump-required";
 const RULE_SEMVER_PATCH_REQUIRED: &str = "semverguard/patch-bump-required";
+const RULE_TOOL_ERROR: &str = "semverguard/tool-error";
+const RULE_BASELINE_ERROR: &str = "semverguard/baseline-error";
 
 /// Generate SARIF rules for semverguard.
 fn generate_rules() -> Vec<SarifRule> {
@@ -301,6 +305,34 @@ fn generate_rules() -> Vec<SarifRule> {
                 level: SarifLevel::Note,
             }),
         },
+        SarifRule {
+            id: RULE_TOOL_ERROR.to_string(),
+            short_description: Some(SarifMessage::text("Tool error during semver checks")),
+            full_description: Some(SarifMessage::text(
+                "Semverguard encountered a tool or execution error while running checks.",
+            )),
+            help: Some(SarifMessage::text(
+                "Review engine logs and configuration, then retry the check.",
+            )),
+            help_uri: None,
+            default_configuration: Some(SarifRuleConfiguration {
+                level: SarifLevel::Error,
+            }),
+        },
+        SarifRule {
+            id: RULE_BASELINE_ERROR.to_string(),
+            short_description: Some(SarifMessage::text("Baseline error detected")),
+            full_description: Some(SarifMessage::text(
+                "Semverguard could not resolve or access the requested baseline.",
+            )),
+            help: Some(SarifMessage::text(
+                "Verify the baseline reference and ensure required history is available.",
+            )),
+            help_uri: None,
+            default_configuration: Some(SarifRuleConfiguration {
+                level: SarifLevel::Warning,
+            }),
+        },
     ]
 }
 
@@ -332,7 +364,8 @@ pub fn report_to_sarif(report: &RunReport) -> SarifLog {
                     name: "semverguard".to_string(),
                     semantic_version: Some(report.semverguard_version.clone()),
                     full_name: Some(format!("semverguard {}", report.semverguard_version)),
-                    information_uri: Some("https://github.com/your-org/semverguard".to_string()),
+                    information_uri: option_env!("CARGO_PKG_REPOSITORY")
+                        .map(|s| s.to_string()),
                     rules: generate_rules(),
                 },
             },
@@ -344,38 +377,52 @@ pub fn report_to_sarif(report: &RunReport) -> SarifLog {
 
 /// Convert a package report to a SARIF result.
 fn package_to_sarif_result(pkg: &PackageReport) -> SarifResult {
-    let (rule_id, level) = match pkg.inferred_required_bump {
-        Some(RequiredBump::Major) => (RULE_SEMVER_MAJOR_REQUIRED, SarifLevel::Error),
-        Some(RequiredBump::Minor) => (RULE_SEMVER_MINOR_REQUIRED, SarifLevel::Warning),
-        Some(RequiredBump::Patch) => (RULE_SEMVER_PATCH_REQUIRED, SarifLevel::Note),
-        Some(RequiredBump::Unknown) | None => (RULE_SEMVER_BREAKING, SarifLevel::Error),
+    let (rule_id, level) = match pkg.failure_kind.unwrap_or(FailureKind::Unknown) {
+        FailureKind::BaselineError => (RULE_BASELINE_ERROR, SarifLevel::Warning),
+        FailureKind::ToolError => (RULE_TOOL_ERROR, SarifLevel::Error),
+        FailureKind::SemverViolation | FailureKind::Unknown => match pkg.inferred_required_bump {
+            Some(RequiredBump::Major) => (RULE_SEMVER_MAJOR_REQUIRED, SarifLevel::Error),
+            Some(RequiredBump::Minor) => (RULE_SEMVER_MINOR_REQUIRED, SarifLevel::Warning),
+            Some(RequiredBump::Patch) => (RULE_SEMVER_PATCH_REQUIRED, SarifLevel::Note),
+            Some(RequiredBump::Unknown) | None => (RULE_SEMVER_BREAKING, SarifLevel::Error),
+        },
     };
 
-    let message_text = match pkg.inferred_required_bump {
-        Some(RequiredBump::Major) => {
-            format!(
-                "Package `{}` (v{}) has breaking changes requiring a major version bump",
-                pkg.name, pkg.version
-            )
-        }
-        Some(RequiredBump::Minor) => {
-            format!(
-                "Package `{}` (v{}) has new features requiring a minor version bump",
-                pkg.name, pkg.version
-            )
-        }
-        Some(RequiredBump::Patch) => {
-            format!(
-                "Package `{}` (v{}) has changes requiring a patch version bump",
-                pkg.name, pkg.version
-            )
-        }
-        Some(RequiredBump::Unknown) | None => {
-            format!(
-                "Package `{}` (v{}) failed semantic versioning check",
-                pkg.name, pkg.version
-            )
-        }
+    let message_text = match pkg.failure_kind.unwrap_or(FailureKind::Unknown) {
+        FailureKind::BaselineError => format!(
+            "Baseline error while checking `{}` (v{})",
+            pkg.name, pkg.version
+        ),
+        FailureKind::ToolError => format!(
+            "Tool error while checking `{}` (v{})",
+            pkg.name, pkg.version
+        ),
+        FailureKind::SemverViolation | FailureKind::Unknown => match pkg.inferred_required_bump {
+            Some(RequiredBump::Major) => {
+                format!(
+                    "Package `{}` (v{}) has breaking changes requiring a major version bump",
+                    pkg.name, pkg.version
+                )
+            }
+            Some(RequiredBump::Minor) => {
+                format!(
+                    "Package `{}` (v{}) has new features requiring a minor version bump",
+                    pkg.name, pkg.version
+                )
+            }
+            Some(RequiredBump::Patch) => {
+                format!(
+                    "Package `{}` (v{}) has changes requiring a patch version bump",
+                    pkg.name, pkg.version
+                )
+            }
+            Some(RequiredBump::Unknown) | None => {
+                format!(
+                    "Package `{}` (v{}) failed semantic versioning check",
+                    pkg.name, pkg.version
+                )
+            }
+        },
     };
 
     SarifResult {
@@ -388,12 +435,7 @@ fn package_to_sarif_result(pkg: &PackageReport) -> SarifResult {
                     uri: path_to_uri(&pkg.manifest_path),
                     uri_base_id: None,
                 },
-                region: Some(SarifRegion {
-                    start_line: Some(1),
-                    start_column: Some(1),
-                    end_line: None,
-                    end_column: None,
-                }),
+                region: None,
             },
         }],
         properties: Some(SarifResultProperties {
@@ -402,6 +444,95 @@ fn package_to_sarif_result(pkg: &PackageReport) -> SarifResult {
             required_bump: pkg.inferred_required_bump.map(|b| format!("{:?}", b)),
             duration_ms: Some(pkg.duration_ms),
         }),
+    }
+}
+
+/// Convert a receipt to SARIF format.
+pub fn receipt_to_sarif(receipt: &SensorReportV1) -> SarifLog {
+    let results = receipt
+        .findings
+        .iter()
+        .map(finding_to_sarif_result)
+        .collect();
+
+    let invocation = SarifInvocation {
+        execution_successful: matches!(receipt.verdict.status, semverguard_types::VerdictStatus::Pass),
+        start_time_utc: Some(receipt.run.started_at.clone()),
+        end_time_utc: Some(receipt.run.finished_at.clone()),
+        working_directory: Some(SarifArtifactLocation {
+            uri: path_to_uri(&receipt.run.workspace_root),
+            uri_base_id: None,
+        }),
+    };
+
+    SarifLog {
+        schema: SARIF_SCHEMA.to_string(),
+        version: SARIF_VERSION.to_string(),
+        runs: vec![SarifRun {
+            tool: SarifTool {
+                driver: SarifToolComponent {
+                    name: receipt.tool.name.clone(),
+                    semantic_version: Some(receipt.tool.version.clone()),
+                    full_name: Some(format!("{} {}", receipt.tool.name, receipt.tool.version)),
+                    information_uri: receipt.tool.repository_url.clone(),
+                    rules: generate_rules(),
+                },
+            },
+            results,
+            invocations: vec![invocation],
+        }],
+    }
+}
+
+fn finding_to_sarif_result(finding: &Finding) -> SarifResult {
+    let (rule_id, level) = match finding.check_id.as_str() {
+        "baseline" => (RULE_BASELINE_ERROR, SarifLevel::Warning),
+        "tool" => (RULE_TOOL_ERROR, SarifLevel::Error),
+        "semver" => {
+            if let Some(bump) = finding
+                .data
+                .as_ref()
+                .and_then(|v| v.get("required_bump"))
+                .and_then(|v| v.as_str())
+            {
+                match bump {
+                    "major" => (RULE_SEMVER_MAJOR_REQUIRED, SarifLevel::Error),
+                    "minor" => (RULE_SEMVER_MINOR_REQUIRED, SarifLevel::Warning),
+                    "patch" => (RULE_SEMVER_PATCH_REQUIRED, SarifLevel::Note),
+                    _ => (RULE_SEMVER_BREAKING, SarifLevel::Error),
+                }
+            } else {
+                (RULE_SEMVER_BREAKING, SarifLevel::Error)
+            }
+        }
+        _ => (RULE_SEMVER_BREAKING, SarifLevel::Error),
+    };
+
+    let locations = if let Some(loc) = &finding.location {
+        let path = loc
+            .raw_log
+            .as_ref()
+            .or(loc.path.as_ref())
+            .map(|p| SarifLocation {
+                physical_location: SarifPhysicalLocation {
+                    artifact_location: SarifArtifactLocation {
+                        uri: path_to_uri(Path::new(p)),
+                        uri_base_id: None,
+                    },
+                    region: None,
+                },
+            });
+        path.into_iter().collect()
+    } else {
+        Vec::new()
+    };
+
+    SarifResult {
+        rule_id: rule_id.to_string(),
+        level,
+        message: SarifMessage::text(finding.message.clone()),
+        locations,
+        properties: None,
     }
 }
 
@@ -441,7 +572,7 @@ pub fn sarif_to_json(log: &SarifLog, pretty: bool) -> serde_json::Result<String>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use semverguard_types::{PackageStatus, Summary};
+    use semverguard_types::{FailureKind, PackageStatus, Summary};
     use std::path::PathBuf;
 
     fn sample_report() -> RunReport {
@@ -461,6 +592,7 @@ mod tests {
                     command: vec!["cargo".to_string()],
                     engine: None,
                     inferred_required_bump: Some(RequiredBump::Major),
+                    failure_kind: Some(FailureKind::SemverViolation),
                 },
                 PackageReport {
                     name: "lib-b".to_string(),
@@ -472,6 +604,7 @@ mod tests {
                     command: vec!["cargo".to_string()],
                     engine: None,
                     inferred_required_bump: None,
+                    failure_kind: None,
                 },
             ],
             summary: Summary {
@@ -515,11 +648,13 @@ mod tests {
         let sarif = report_to_sarif(&report);
 
         let rules = &sarif.runs[0].tool.driver.rules;
-        assert_eq!(rules.len(), 4);
+        assert_eq!(rules.len(), 6);
         assert!(rules.iter().any(|r| r.id == RULE_SEMVER_BREAKING));
         assert!(rules.iter().any(|r| r.id == RULE_SEMVER_MAJOR_REQUIRED));
         assert!(rules.iter().any(|r| r.id == RULE_SEMVER_MINOR_REQUIRED));
         assert!(rules.iter().any(|r| r.id == RULE_SEMVER_PATCH_REQUIRED));
+        assert!(rules.iter().any(|r| r.id == RULE_TOOL_ERROR));
+        assert!(rules.iter().any(|r| r.id == RULE_BASELINE_ERROR));
     }
 
     #[test]

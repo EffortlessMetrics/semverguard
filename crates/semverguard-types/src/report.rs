@@ -60,6 +60,9 @@ pub struct PackageReport {
     pub engine: Option<SemverCheckOutput>,
     /// Best-effort required bump inference.
     pub inferred_required_bump: Option<RequiredBump>,
+    /// Failure classification (for failed packages).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<FailureKind>,
 }
 
 /// Result classification for a package.
@@ -72,6 +75,20 @@ pub enum PackageStatus {
     Failed,
     /// Skipped by semverguard policy/scoping.
     Skipped,
+}
+
+/// Failure classification for a package.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FailureKind {
+    /// Semantic versioning policy violation.
+    SemverViolation,
+    /// Tool or execution error.
+    ToolError,
+    /// Baseline selection error.
+    BaselineError,
+    /// Unknown or unclassified failure.
+    Unknown,
 }
 
 /// Result of listing packages without running checks.
@@ -163,6 +180,26 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&PackageStatus::Skipped).unwrap(),
             "\"skipped\""
+        );
+    }
+
+    #[test]
+    fn test_failure_kind_json_kebab_case() {
+        assert_eq!(
+            serde_json::to_string(&FailureKind::SemverViolation).unwrap(),
+            "\"semver-violation\""
+        );
+        assert_eq!(
+            serde_json::to_string(&FailureKind::ToolError).unwrap(),
+            "\"tool-error\""
+        );
+        assert_eq!(
+            serde_json::to_string(&FailureKind::BaselineError).unwrap(),
+            "\"baseline-error\""
+        );
+        assert_eq!(
+            serde_json::to_string(&FailureKind::Unknown).unwrap(),
+            "\"unknown\""
         );
     }
 
@@ -264,6 +301,7 @@ mod tests {
                 required_bump: None,
             }),
             inferred_required_bump: None,
+            failure_kind: None,
         };
 
         assert_eq!(report.name, "mylib");
@@ -295,6 +333,7 @@ mod tests {
                 required_bump: Some(RequiredBump::Major),
             }),
             inferred_required_bump: Some(RequiredBump::Major),
+            failure_kind: Some(FailureKind::SemverViolation),
         };
 
         assert_eq!(report.status, PackageStatus::Failed);
@@ -316,6 +355,7 @@ mod tests {
             command: vec![],
             engine: None,
             inferred_required_bump: None,
+            failure_kind: None,
         };
 
         assert_eq!(report.status, PackageStatus::Skipped);
@@ -341,6 +381,7 @@ mod tests {
                 required_bump: None,
             }),
             inferred_required_bump: None,
+            failure_kind: None,
         };
 
         let json = serde_json::to_string(&original).unwrap();
@@ -374,6 +415,7 @@ mod tests {
                     command: vec!["cargo".to_string()],
                     engine: None,
                     inferred_required_bump: None,
+                    failure_kind: None,
                 },
                 PackageReport {
                     name: "lib-b".to_string(),
@@ -391,6 +433,7 @@ mod tests {
                         required_bump: Some(RequiredBump::Minor),
                     }),
                     inferred_required_bump: Some(RequiredBump::Minor),
+                    failure_kind: Some(FailureKind::SemverViolation),
                 },
             ],
             summary: Summary {
@@ -495,6 +538,7 @@ mod tests {
                 command: vec![],
                 engine: None,
                 inferred_required_bump: None,
+                failure_kind: None,
             },
             PackageReport {
                 name: "b".to_string(),
@@ -506,6 +550,7 @@ mod tests {
                 command: vec![],
                 engine: None,
                 inferred_required_bump: None,
+                failure_kind: Some(FailureKind::Unknown),
             },
             PackageReport {
                 name: "c".to_string(),
@@ -517,6 +562,7 @@ mod tests {
                 command: vec![],
                 engine: None,
                 inferred_required_bump: None,
+                failure_kind: None,
             },
         ];
 
@@ -544,6 +590,7 @@ mod tests {
             command: vec![],
             engine: None,
             inferred_required_bump: None,
+            failure_kind: None,
         };
 
         let json = serde_json::to_string(&report).unwrap();
@@ -591,6 +638,7 @@ mod tests {
             command: vec![],
             engine: None,
             inferred_required_bump: None,
+            failure_kind: None,
         };
 
         let json = serde_json::to_string(&report).unwrap();

@@ -5,7 +5,8 @@ use semverguard_domain::SemverguardRunner;
 use semverguard_engine::CargoSemverChecksEngine;
 use semverguard_git::GitCli;
 use semverguard_types::{
-    BaselineKind, ListResult, OutputFormat, RunReport, ScopeMode, SemverguardConfig,
+    BaselineKind, FailureKind, ListResult, OutputFormat, PackageStatus, RunReport, ScopeMode,
+    SemverguardConfig,
 };
 use semverguard_workspace::CargoMetadataWorkspace;
 use std::fs;
@@ -14,7 +15,13 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 mod progress;
 mod sarif;
+mod comment;
+mod receipt;
 use progress::{create_progress_reporter, ProgressCallbackAdapter, ProgressChoice};
+use receipt::{
+    build_artifact_index, build_receipt, exit_code_from_receipt, has_tool_error,
+    write_receipt_bundle, ToolErrorFinding,
+};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -121,6 +128,10 @@ struct CheckArgs {
     #[arg(long, value_enum)]
     format: Option<FormatOpt>,
 
+    /// Output directory for receipt artifacts (defaults to artifacts/semverguard).
+    #[arg(long)]
+    artifacts_dir: Option<PathBuf>,
+
     /// Stop after first failing crate.
     #[arg(long)]
     fail_fast: bool,
@@ -170,6 +181,8 @@ enum FormatOpt {
     Both,
     /// SARIF (Static Analysis Results Interchange Format) for CI tools.
     Sarif,
+    /// Cockpit receipt output (sensor.report.v1).
+    Receipt,
 }
 
 impl From<FormatOpt> for OutputFormat {
@@ -179,19 +192,23 @@ impl From<FormatOpt> for OutputFormat {
             FormatOpt::Json => OutputFormat::Json,
             FormatOpt::Both => OutputFormat::Both,
             FormatOpt::Sarif => OutputFormat::Sarif,
+            FormatOpt::Receipt => OutputFormat::Receipt,
         }
     }
 }
 
 fn main() -> std::process::ExitCode {
-    if let Err(e) = run() {
-        eprintln!("error: {e:?}");
-        return std::process::ExitCode::from(2);
-    }
-    std::process::ExitCode::from(0)
+    let exit_code = match run() {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("error: {e:?}");
+            1
+        }
+    };
+    std::process::ExitCode::from(exit_code as u8)
 }
 
-fn run() -> Result<()> {
+fn run() -> Result<i32> {
     let cli = Cli::parse();
 
     match cli.cmd {
@@ -203,74 +220,18 @@ fn run() -> Result<()> {
             // Nothing else to override (yet) besides ensuring workspace_root exists.
             ensure_workspace_root(&args.workspace_root)?;
             print_config(&config)?;
-            Ok(())
+            Ok(0)
         }
         Commands::ValidateConfig(args) => {
             run_validate_config(&args)?;
-            Ok(())
+            Ok(0)
         }
         Commands::List(args) => {
             run_list(&args)?;
-            Ok(())
+            Ok(0)
         }
         Commands::Check(args) => {
-            let cfg_path = args
-                .config
-                .clone()
-                .unwrap_or_else(|| PathBuf::from("semverguard.toml"));
-            ensure_workspace_root(&args.workspace_root)?;
-            let mut config = load_config(&cfg_path)?;
-            apply_cli_overrides(&mut config, &args);
-
-            // Wire adapters.
-            let workspace = CargoMetadataWorkspace::default();
-            let git = GitCli::default();
-            let engine = CargoSemverChecksEngine::default();
-
-            // Create progress reporter based on CLI flag
-            let progress_choice: ProgressChoice = args.progress.clone().into();
-            let progress_reporter = create_progress_reporter(progress_choice);
-            let progress_callback = ProgressCallbackAdapter::new(progress_reporter);
-
-            let runner = SemverguardRunner::with_progress(
-                &workspace,
-                Some(&git),
-                &engine,
-                progress_callback,
-            );
-
-            // Handle --dry-run: show what would be checked without actually running
-            if args.dry_run {
-                let list_result = runner.list_packages(&args.workspace_root, &config)?;
-                print_list_text(&list_result);
-                return Ok(());
-            }
-
-            let started = OffsetDateTime::now_utc();
-            let artifacts = runner.run(&args.workspace_root, &config)?;
-            let finished = OffsetDateTime::now_utc();
-
-            let report = RunReport {
-                semverguard_version: env!("CARGO_PKG_VERSION").to_string(),
-                started_at: started
-                    .format(&Rfc3339)
-                    .unwrap_or_else(|_| started.unix_timestamp().to_string()),
-                finished_at: finished
-                    .format(&Rfc3339)
-                    .unwrap_or_else(|_| finished.unix_timestamp().to_string()),
-                workspace_root: artifacts.workspace_root,
-                packages: artifacts.packages,
-                summary: artifacts.summary,
-            };
-
-            emit_outputs(&config, &report)?;
-
-            if report.summary.overall_success() {
-                Ok(())
-            } else {
-                // Non-zero exit for CI gating.
-                std::process::exit(1)
-            }
+            run_check(&args)
         }
     }
 }
@@ -348,8 +309,164 @@ fn apply_cli_overrides(cfg: &mut SemverguardConfig, args: &CheckArgs) {
 
     // Handle --sarif shorthand flag (takes precedence over --json if both specified)
     if let Some(sarif_path) = &args.sarif {
-        cfg.output.format = OutputFormat::Sarif;
-        cfg.output.json_path = Some(sarif_path.clone());
+        if matches!(cfg.output.format, OutputFormat::Receipt) {
+            // Receipt mode can still emit SARIF, but keep receipt as primary format.
+        } else {
+            cfg.output.format = OutputFormat::Sarif;
+            cfg.output.json_path = Some(sarif_path.clone());
+        }
+    }
+
+    if let Some(dir) = &args.artifacts_dir {
+        cfg.output.artifacts_dir = dir.clone();
+    }
+}
+
+fn run_check(args: &CheckArgs) -> Result<i32> {
+    let cfg_path = args
+        .config
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("semverguard.toml"));
+
+    let cfg_result = load_config(&cfg_path);
+    let mut config = match &cfg_result {
+        Ok(cfg) => cfg.clone(),
+        Err(_) => SemverguardConfig::default(),
+    };
+    apply_cli_overrides(&mut config, args);
+
+    let receipt_requested = matches!(config.output.format, OutputFormat::Receipt);
+    let sarif_requested = receipt_requested && args.sarif.is_some();
+
+    if let Err(e) = cfg_result {
+        return handle_tool_error(e, &config, receipt_requested, sarif_requested);
+    }
+
+    if let Err(e) = ensure_workspace_root(&args.workspace_root) {
+        return handle_tool_error(e, &config, receipt_requested, sarif_requested);
+    }
+
+    // Wire adapters.
+    let workspace = CargoMetadataWorkspace::default();
+    let git = GitCli::default();
+    let engine = CargoSemverChecksEngine::default();
+
+    // Create progress reporter based on CLI flag
+    let progress_choice: ProgressChoice = args.progress.clone().into();
+    let progress_reporter = create_progress_reporter(progress_choice);
+    let progress_callback = ProgressCallbackAdapter::new(progress_reporter);
+
+    let runner = SemverguardRunner::with_progress(&workspace, Some(&git), &engine, progress_callback);
+
+    // Handle --dry-run: show what would be checked without actually running
+    if args.dry_run {
+        let list_result = runner.list_packages(&args.workspace_root, &config)?;
+        print_list_text(&list_result);
+        return Ok(0);
+    }
+
+    let started = OffsetDateTime::now_utc();
+    let artifacts = match runner.run(&args.workspace_root, &config) {
+        Ok(artifacts) => artifacts,
+        Err(e) => {
+            return handle_tool_error(anyhow::Error::new(e), &config, receipt_requested, sarif_requested);
+        }
+    };
+    let finished = OffsetDateTime::now_utc();
+
+    let report = RunReport {
+        semverguard_version: env!("CARGO_PKG_VERSION").to_string(),
+        started_at: started
+            .format(&Rfc3339)
+            .unwrap_or_else(|_| started.unix_timestamp().to_string()),
+        finished_at: finished
+            .format(&Rfc3339)
+            .unwrap_or_else(|_| finished.unix_timestamp().to_string()),
+        workspace_root: artifacts.workspace_root,
+        packages: artifacts.packages,
+        summary: artifacts.summary,
+    };
+
+    if receipt_requested {
+        let artifact_index =
+            build_artifact_index(&config.output.artifacts_dir, Some(&report), sarif_requested);
+        let receipt = build_receipt(Some(&report), &[], &artifact_index, &config.baseline);
+        write_receipt_bundle(
+            &config.output.artifacts_dir,
+            &receipt,
+            Some(&report),
+            sarif_requested,
+            config.output.pretty_json,
+        )?;
+        let code = exit_code_from_receipt(
+            &receipt.verdict,
+            config.output.warn_as_fail,
+            has_tool_error(&receipt.findings),
+        );
+        return Ok(code);
+    }
+
+    emit_outputs(&config, &report)?;
+    Ok(exit_code_from_report(&report, config.output.warn_as_fail))
+}
+
+fn handle_tool_error(
+    err: anyhow::Error,
+    config: &SemverguardConfig,
+    receipt_requested: bool,
+    sarif_requested: bool,
+) -> Result<i32> {
+    if !receipt_requested {
+        return Err(err);
+    }
+
+    eprintln!("error: {err:?}");
+    let errors = vec![ToolErrorFinding::new(err.to_string())];
+    let artifact_index = build_artifact_index(&config.output.artifacts_dir, None, sarif_requested);
+    let receipt = build_receipt(None, &errors, &artifact_index, &config.baseline);
+    write_receipt_bundle(
+        &config.output.artifacts_dir,
+        &receipt,
+        None,
+        sarif_requested,
+        config.output.pretty_json,
+    )?;
+    let code = exit_code_from_receipt(
+        &receipt.verdict,
+        config.output.warn_as_fail,
+        has_tool_error(&receipt.findings),
+    );
+    Ok(code)
+}
+
+fn exit_code_from_report(report: &RunReport, warn_as_fail: bool) -> i32 {
+    let mut has_tool_error_flag = false;
+    let mut has_semver_violation = false;
+    let mut has_baseline_error = false;
+
+    for pkg in &report.packages {
+        if pkg.status != PackageStatus::Failed {
+            continue;
+        }
+        match pkg.failure_kind.unwrap_or(FailureKind::Unknown) {
+            FailureKind::ToolError => has_tool_error_flag = true,
+            FailureKind::BaselineError => has_baseline_error = true,
+            FailureKind::SemverViolation | FailureKind::Unknown => has_semver_violation = true,
+        }
+    }
+
+    if has_tool_error_flag {
+        1
+    } else if has_semver_violation {
+        2
+    } else if has_baseline_error {
+        if warn_as_fail {
+            3
+        } else {
+            0
+        }
+    } else {
+        0
     }
 }
 
@@ -367,6 +484,9 @@ fn emit_outputs(cfg: &SemverguardConfig, report: &RunReport) -> Result<()> {
         }
         OutputFormat::Sarif => {
             write_sarif(cfg, report)?;
+        }
+        OutputFormat::Receipt => {
+            // Receipt output is handled separately.
         }
     }
     Ok(())

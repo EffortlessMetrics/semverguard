@@ -48,7 +48,8 @@ Each entry in the `packages` array:
   "duration_ms": 1234,
   "command": ["cargo", "semver-checks", "check-release", "--manifest-path", "..."],
   "engine": {...},
-  "inferred_required_bump": null
+  "inferred_required_bump": null,
+  "failure_kind": null
 }
 ```
 
@@ -65,6 +66,7 @@ Each entry in the `packages` array:
 | `command` | string[] | Command executed (empty if skipped) |
 | `engine` | object \| null | Engine output details (see below) |
 | `inferred_required_bump` | string \| null | Required version bump level |
+| `failure_kind` | string \| null | Failure classification (failed packages only) |
 
 ### `status` Values
 
@@ -94,6 +96,16 @@ When `status = "skipped"`, this explains why:
 | `null` | No bump required or not applicable |
 
 This is inferred from cargo-semver-checks output and may not always be present.
+
+### `failure_kind` Values
+
+| Value | Description |
+|-------|-------------|
+| `"semver-violation"` | Semantic versioning policy violation |
+| `"tool-error"` | Tool or execution error |
+| `"baseline-error"` | Baseline could not be resolved |
+| `"unknown"` | Unclassified failure |
+| `null` | Not applicable (passed/skipped) |
 
 ## Engine Output
 
@@ -171,7 +183,8 @@ Invariant: `total == passed + failed + skipped`
         "stderr": "",
         "required_bump": null
       },
-      "inferred_required_bump": null
+      "inferred_required_bump": null,
+      "failure_kind": null
     },
     {
       "name": "my-lib-utils",
@@ -194,7 +207,8 @@ Invariant: `total == passed + failed + skipped`
         "stderr": "Checking my-lib-utils v2.0.0 against v1.5.0\nBreaking: function `helper_fn` was removed\nMajor bump required",
         "required_bump": "major"
       },
-      "inferred_required_bump": "major"
+      "inferred_required_bump": "major",
+      "failure_kind": "semver-violation"
     },
     {
       "name": "my-lib-internal",

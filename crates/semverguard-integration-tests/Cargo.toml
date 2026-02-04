@@ -15,11 +15,13 @@ path = "src/lib.rs"
 [dev-dependencies]
 semverguard-domain = { path = "../semverguard-domain", features = ["test-utils"] }
 semverguard-types = { path = "../semverguard-types" }
+semverguard-cli = { path = "../semverguard-cli" }
 semver = "1"
 serde_json = "1"
 cucumber = "0.21"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 futures = "0.3"
+tempfile = "3"
 
 [[test]]
 name = "cucumber"

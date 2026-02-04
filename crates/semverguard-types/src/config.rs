@@ -252,6 +252,8 @@ pub enum OutputFormat {
     /// Used for integration with security and code quality tools like GitHub Code Scanning,
     /// VS Code SARIF Viewer, and other security analysis platforms.
     Sarif,
+    /// Cockpit receipt output (sensor.report.v1).
+    Receipt,
 }
 
 impl Default for OutputFormat {
@@ -349,6 +351,12 @@ pub struct OutputConfig {
     /// Pretty-print the JSON report.
     pub pretty_json: bool,
 
+    /// Output directory for receipt artifacts.
+    pub artifacts_dir: PathBuf,
+
+    /// Treat warnings as failures for exit codes.
+    pub warn_as_fail: bool,
+
     /// Color output mode for terminal rendering.
     pub color: ColorChoice,
 
@@ -362,6 +370,8 @@ impl Default for OutputConfig {
             format: OutputFormat::Text,
             json_path: None,
             pretty_json: true,
+            artifacts_dir: PathBuf::from("artifacts/semverguard"),
+            warn_as_fail: false,
             color: ColorChoice::Auto,
             verbosity: Verbosity::Normal,
         }
@@ -448,6 +458,11 @@ mod tests {
         assert!(matches!(config.format, OutputFormat::Text));
         assert!(config.json_path.is_none());
         assert!(config.pretty_json);
+        assert_eq!(
+            config.artifacts_dir,
+            PathBuf::from("artifacts/semverguard")
+        );
+        assert!(!config.warn_as_fail);
     }
 
     // =========================================================================
@@ -576,7 +591,12 @@ mod tests {
 
     #[test]
     fn test_output_format_json_roundtrip() {
-        for format in [OutputFormat::Text, OutputFormat::Json, OutputFormat::Both] {
+        for format in [
+            OutputFormat::Text,
+            OutputFormat::Json,
+            OutputFormat::Both,
+            OutputFormat::Receipt,
+        ] {
             let json = serde_json::to_string(&format).unwrap();
             let deserialized: OutputFormat = serde_json::from_str(&json).unwrap();
             assert!(matches!(
@@ -584,6 +604,7 @@ mod tests {
                 (OutputFormat::Text, OutputFormat::Text)
                     | (OutputFormat::Json, OutputFormat::Json)
                     | (OutputFormat::Both, OutputFormat::Both)
+                    | (OutputFormat::Receipt, OutputFormat::Receipt)
             ));
         }
     }
@@ -594,6 +615,8 @@ mod tests {
             format: OutputFormat::Both,
             json_path: Some(PathBuf::from("/output/report.json")),
             pretty_json: false,
+            artifacts_dir: PathBuf::from("/output/artifacts"),
+            warn_as_fail: true,
             color: ColorChoice::Auto,
             verbosity: Verbosity::Normal,
         };
@@ -606,6 +629,11 @@ mod tests {
             Some(PathBuf::from("/output/report.json"))
         );
         assert!(!deserialized.pretty_json);
+        assert_eq!(
+            deserialized.artifacts_dir,
+            PathBuf::from("/output/artifacts")
+        );
+        assert!(deserialized.warn_as_fail);
     }
 
     // =========================================================================
@@ -695,6 +723,11 @@ pretty_json = false
         assert!(matches!(config.output.format, OutputFormat::Both));
         assert_eq!(config.output.json_path, Some(PathBuf::from("report.json")));
         assert!(!config.output.pretty_json);
+        assert_eq!(
+            config.output.artifacts_dir,
+            PathBuf::from("artifacts/semverguard")
+        );
+        assert!(!config.output.warn_as_fail);
     }
 
     #[test]
@@ -732,6 +765,10 @@ pretty_json = false
         let toml_str = r#"format = "both""#;
         let config: OutputConfig = toml::from_str(toml_str).unwrap();
         assert!(matches!(config.format, OutputFormat::Both));
+
+        let toml_str = r#"format = "receipt""#;
+        let config: OutputConfig = toml::from_str(toml_str).unwrap();
+        assert!(matches!(config.format, OutputFormat::Receipt));
     }
 
     #[test]
@@ -765,6 +802,11 @@ exclude = ["test-*"]
 
         // Output: all defaults
         assert!(matches!(config.output.format, OutputFormat::Text));
+        assert_eq!(
+            config.output.artifacts_dir,
+            PathBuf::from("artifacts/semverguard")
+        );
+        assert!(!config.output.warn_as_fail);
     }
 
     // =========================================================================

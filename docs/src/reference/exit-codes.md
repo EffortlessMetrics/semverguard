@@ -6,125 +6,54 @@ Reference for semverguard exit codes and their meanings.
 
 | Exit Code | Meaning | CI Behavior |
 |-----------|---------|-------------|
-| 0 | Success | Pass |
-| 1 | SemVer failures detected | Fail |
-| 2 | Configuration or invocation error | Fail |
+| 0 | Success (pass or warn when warn-as-fail is disabled) | Pass |
+| 1 | Tool/runtime error | Fail |
+| 2 | SemVer policy failure | Fail |
+| 3 | Warnings treated as failures (warn-as-fail) | Fail |
 
 ## Exit Code 0: Success
 
-All checks passed. No breaking changes detected in any checked packages.
+All checks passed, or only warnings were emitted and warn-as-fail is disabled.
 
 ### Conditions
 
-- All eligible packages passed their SemVer check
-- Skipped packages do not affect success/failure
+- No SemVer violations
+- No tool/runtime errors
+- Baseline warnings are allowed (default)
 
-### Example Scenario
+## Exit Code 1: Tool/Runtime Error
 
-```
-semverguard: total=5 passed=3 failed=0 skipped=2
-```
-
-Even with skipped packages, exit code is 0 because no packages failed.
-
-## Exit Code 1: SemVer Failures
-
-One or more packages have breaking changes that require a version bump.
-
-### Conditions
-
-- At least one package's SemVer check failed
-- Breaking API changes were detected
-
-### Example Scenario
-
-```
-semverguard: total=5 passed=2 failed=1 skipped=2
-FAIL  my-lib 1.0.0  /path/to/my-lib/Cargo.toml
-      inferred required bump: Major
-```
-
-### CI Behavior
-
-Exit code 1 should fail the CI job, preventing merge of breaking changes without version bump.
-
-### Resolution
-
-1. Review the breaking changes in the output
-2. Either:
-   - Bump the package version appropriately (major for breaking changes)
-   - Revert the breaking changes
-   - Mark the package as non-publishable if appropriate
-
-## Exit Code 2: Configuration Error
-
-Invalid configuration or invocation error prevented execution.
+The tool failed to execute correctly (configuration error, missing baseline history, engine failure, etc.).
 
 ### Common Causes
 
-#### Invalid Configuration
-
-```
-error: scope.mode=changed requires baseline.rev
-```
-
-Fix: Add `--baseline-rev` or configure in TOML:
-
-```toml
-[baseline]
-rev = "origin/main"
-```
-
-#### Invalid Glob Pattern
-
-```
-error: bad glob '[invalid': unterminated character class
-```
-
-Fix: Correct the glob pattern syntax in scope.include or scope.exclude.
-
-#### Missing Workspace Root
-
-```
-error: workspace root does not exist: /nonexistent/path
-```
-
-Fix: Ensure `--workspace-root` points to an existing directory.
-
-#### Invalid TOML Syntax
-
-```
-error: invalid TOML in semverguard.toml: expected newline at line 5
-```
-
-Fix: Correct the TOML syntax error.
-
-#### Incompatible Options
-
-```
-error: scope.mode=changed requires baseline.kind = "git"
-```
-
-Fix: Use git baseline with changed mode:
-
-```toml
-[baseline]
-kind = "git"
-rev = "origin/main"
-
-[scope]
-mode = "changed"
-```
+- Invalid configuration or TOML syntax
+- Missing workspace root
+- `cargo-semver-checks` not installed or failed to run
+- Git baseline not available
 
 ### CI Behavior
 
-Exit code 2 should fail the CI job, but indicates a setup issue rather than actual SemVer violations.
+Exit code 1 should fail the CI job and be treated as a tooling problem.
 
-### Resolution
+## Exit Code 2: SemVer Policy Failure
 
-1. Check the error message for the specific issue
-2. Fix the configuration or invocation
-3. Use `semverguard print-config` to debug effective configuration
+One or more packages failed SemVer checks due to API compatibility violations.
+
+### Conditions
+
+- At least one package returns a SemVer violation (breaking change)
+- SemVer policy failure takes precedence over baseline warnings
+
+## Exit Code 3: Warn-as-Fail
+
+Warnings were emitted (e.g., baseline issues) and warn-as-fail is enabled.
+
+### Conditions
+
+- No SemVer violations
+- No tool/runtime errors
+- At least one warning, and `warn_as_fail = true`
 
 ## Shell Integration
 
@@ -134,33 +63,21 @@ Exit code 2 should fail the CI job, but indicates a setup issue rather than actu
 semverguard check
 case $? in
   0)
-    echo "All checks passed"
+    echo "Checks passed (or warnings allowed)"
     ;;
   1)
-    echo "Breaking changes detected"
+    echo "Tool/runtime error"
     exit 1
     ;;
   2)
-    echo "Configuration error"
+    echo "SemVer violations detected"
     exit 2
     ;;
+  3)
+    echo "Warnings treated as failures"
+    exit 3
+    ;;
 esac
-```
-
-### GitHub Actions
-
-```yaml
-- name: Run semverguard
-  id: semver
-  run: semverguard check
-  continue-on-error: true
-
-- name: Handle result
-  run: |
-    if [ "${{ steps.semver.outcome }}" == "failure" ]; then
-      echo "SemVer check failed"
-      exit 1
-    fi
 ```
 
 ### PowerShell
@@ -168,67 +85,26 @@ esac
 ```powershell
 semverguard check
 switch ($LASTEXITCODE) {
-    0 { Write-Host "All checks passed" }
-    1 { Write-Host "Breaking changes detected"; exit 1 }
-    2 { Write-Host "Configuration error"; exit 2 }
+    0 { Write-Host "Checks passed (or warnings allowed)" }
+    1 { Write-Host "Tool/runtime error"; exit 1 }
+    2 { Write-Host "SemVer violations detected"; exit 2 }
+    3 { Write-Host "Warnings treated as failures"; exit 3 }
 }
 ```
 
 ## Programmatic Access
 
-The JSON report includes enough information to determine the exit code:
+For receipt output (`--format receipt`), use the verdict:
 
-```bash
-# Check for failures
-if jq -e '.summary.failed > 0' report.json > /dev/null; then
-  echo "Exit code would be 1"
-fi
-```
+- `pass` → exit 0
+- `warn` → exit 0 or 3 (if warn-as-fail)
+- `fail` → exit 1 (tool error) or 2 (policy failure)
+- `skip` → exit 0
 
-```python
-import json
-import sys
-
-with open('report.json') as f:
-    report = json.load(f)
-
-if report['summary']['failed'] > 0:
-    sys.exit(1)
-sys.exit(0)
-```
-
-## Troubleshooting
-
-### Unexpected Exit Code 2
-
-Run with `print-config` to verify configuration:
-
-```bash
-semverguard print-config
-```
-
-Check for:
-- Typos in config file keys
-- Invalid TOML syntax
-- Incompatible option combinations
-
-### Exit Code 1 but No Output
-
-Ensure output format includes text:
-
-```bash
-semverguard check --format both
-```
-
-Or check the JSON report:
-
-```bash
-semverguard check --json report.json
-cat report.json | jq '.packages[] | select(.status == "failed")'
-```
+For legacy `RunReport`, check `packages[].failure_kind` and summary counts.
 
 ## See Also
 
 - [CLI Reference](./cli.md) - Command-line options
 - [Configuration Reference](./config.md) - Config file options
-- [CI Integration](../tutorials/ci-integration.md) - CI setup guide
+- [Report Schema](./report-schema.md) - JSON output format

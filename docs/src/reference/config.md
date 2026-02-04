@@ -40,6 +40,8 @@ fail_fast = false
 format = "both"
 json_path = "semver-report.json"
 pretty_json = true
+artifacts_dir = "artifacts/semverguard"
+warn_as_fail = false
 ```
 
 ## Sections
@@ -210,9 +212,11 @@ Controls output format and location.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `format` | `"text"` \| `"json"` \| `"both"` \| `"sarif"` | `"text"` | Output format |
+| `format` | `"text"` \| `"json"` \| `"both"` \| `"sarif"` \| `"receipt"` | `"text"` | Output format |
 | `json_path` | Path | — | JSON output file path |
 | `pretty_json` | bool | `true` | Pretty-print JSON |
+| `artifacts_dir` | Path | `artifacts/semverguard` | Output directory for receipt artifacts |
+| `warn_as_fail` | bool | `false` | Treat warnings as failures for exit codes |
 
 #### `format`
 
@@ -220,6 +224,7 @@ Controls output format and location.
 - `"json"`: JSON report (to file or stdout)
 - `"both"`: Text to stdout and JSON to file
 - `"sarif"`: SARIF format for GitHub Code Scanning and security tools
+- `"receipt"`: Cockpit receipt bundle (sensor.report.v1)
 
 #### `json_path`
 
@@ -239,6 +244,25 @@ Enable indented JSON output (larger but readable):
 [output]
 pretty_json = true   # Indented
 pretty_json = false  # Compact
+```
+
+#### `artifacts_dir`
+
+Directory for receipt artifacts (when `format = "receipt"`):
+
+```toml
+[output]
+format = "receipt"
+artifacts_dir = "artifacts/semverguard"
+```
+
+#### `warn_as_fail`
+
+Treat warnings as failures for exit codes:
+
+```toml
+[output]
+warn_as_fail = true
 ```
 
 ---
@@ -273,6 +297,8 @@ extra_args = []
 [output]
 format = "text"
 pretty_json = true
+artifacts_dir = "artifacts/semverguard"
+warn_as_fail = false
 ```
 
 ## CLI Override

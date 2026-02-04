@@ -25,6 +25,7 @@
 - [CLI Reference](./reference/cli.md)
 - [Configuration](./reference/config.md)
 - [Report Schema](./reference/report-schema.md)
+- [Receipt Schema](./reference/receipt-schema.md)
 - [Exit Codes](./reference/exit-codes.md)
 
 ---

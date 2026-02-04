@@ -14,10 +14,13 @@ pub mod config;
 pub mod engine;
 /// Report schema for semver check results.
 pub mod report;
+/// Receipt schema for cockpit integration.
+pub mod receipt;
 /// Workspace metadata types from cargo.
 pub mod workspace;
 
 pub use config::*;
 pub use engine::*;
 pub use report::*;
+pub use receipt::*;
 pub use workspace::*;

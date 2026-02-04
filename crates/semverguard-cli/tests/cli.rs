@@ -555,7 +555,7 @@ exclude = ["internal-*"]
             .arg("--workspace-root")
             .arg(temp_dir.path())
             .assert()
-            .code(2)
+            .code(1)
             .stderr(predicate::str::contains("invalid TOML").or(predicate::str::contains("TOML")));
     }
 
@@ -599,7 +599,7 @@ kind = "invalid-kind"
             .arg("--workspace-root")
             .arg(temp_dir.path())
             .assert()
-            .code(2)
+            .code(1)
             .stderr(predicate::str::contains("invalid").or(predicate::str::contains("TOML")));
     }
 }
@@ -806,16 +806,16 @@ mod exit_codes {
     }
 
     // -------------------------------------------------------------------------
-    // Exit 1 on semver failures tests
+    // Exit 2 on semver failures tests
     // -------------------------------------------------------------------------
 
-    // Note: Testing exit code 1 (semver failures) requires running the actual
+    // Note: Testing exit code 2 (semver failures) requires running the actual
     // check command with a workspace that has breaking changes. This is
     // documented here but requires cargo-semver-checks to be installed and
     // a specially crafted test fixture.
 
     // -------------------------------------------------------------------------
-    // Exit 2 on config/runtime errors tests
+    // Exit 1 on config/runtime errors tests
     // -------------------------------------------------------------------------
 
     #[test]
@@ -827,7 +827,7 @@ mod exit_codes {
                 "/nonexistent/path/xyz123",
             ])
             .assert()
-            .code(2)
+            .code(1)
             .stderr(predicate::str::contains("workspace root does not exist"));
     }
 
@@ -841,7 +841,7 @@ mod exit_codes {
             .args(["print-config", "--workspace-root"])
             .arg(&file_path)
             .assert()
-            .code(2)
+            .code(1)
             .stderr(predicate::str::contains(
                 "workspace root is not a directory",
             ));
@@ -860,7 +860,7 @@ mod exit_codes {
             .arg("--workspace-root")
             .arg(temp_dir.path())
             .assert()
-            .code(2);
+            .code(1);
     }
 
     #[test]
@@ -899,7 +899,7 @@ fail_fast = "not-a-bool"
             .arg("--workspace-root")
             .arg(temp_dir.path())
             .assert()
-            .code(2);
+            .code(1);
     }
 
     // -------------------------------------------------------------------------

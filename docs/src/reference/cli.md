@@ -42,8 +42,9 @@ semverguard check [OPTIONS]
 | `--baseline-version <VER>` | String | — | crates.io version for baseline (sets `kind = crates-io`) |
 | `--changed` | Flag | false | Only check packages changed relative to baseline |
 | `--json <PATH>` | Path | — | Write JSON report to this path |
-| `--format <FORMAT>` | Enum | `text` | Output format: `text`, `json`, `sarif`, or `both` |
+| `--format <FORMAT>` | Enum | `text` | Output format: `text`, `json`, `sarif`, `both`, or `receipt` |
 | `--sarif <PATH>` | Path | — | Write SARIF report to this path (for GitHub Code Scanning) |
+| `--artifacts-dir <PATH>` | Path | `artifacts/semverguard` | Output directory for receipt artifacts |
 | `--fail-fast` | Flag | false | Stop after first failing package |
 | `--dry-run` | Flag | false | Show what would be checked without running checks |
 | `--cargo-bin <PATH>` | Path | `cargo` | Path to cargo binary |
@@ -77,6 +78,9 @@ semverguard check --cargo-bin ~/.cargo/bin/cargo-nightly
 # Generate SARIF report for GitHub Code Scanning
 semverguard check --sarif semver-results.sarif
 
+# Emit a cockpit receipt bundle (sensor.report.v1)
+semverguard check --format receipt
+
 # Preview what would be checked without running
 semverguard check --dry-run
 ```
@@ -85,6 +89,8 @@ semverguard check --dry-run
 
 - When `--json` is specified without `--format`, the format defaults to `both` (text + JSON)
 - `--sarif` is shorthand for `--format sarif --json <path>` (SARIF format for GitHub Code Scanning)
+- `--format receipt` emits `artifacts/semverguard/report.json`, `comment.md`, and raw logs (optional SARIF)
+- When using `--format receipt`, `--sarif` writes `artifacts/semverguard/sarif.json` (path is ignored)
 - `--baseline-rev` and `--baseline-version` are mutually exclusive (last one wins)
 - `--changed` requires `--baseline-rev` (git baseline)
 - `--engine-arg` can be repeated: `--engine-arg --verbose --engine-arg --release`
@@ -231,9 +237,10 @@ semverguard does not currently read environment variables directly. Use CLI flag
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success: all checks passed |
-| 1 | Failure: SemVer violations detected |
-| 2 | Error: configuration or invocation error |
+| 0 | Success: checks passed (or warnings allowed) |
+| 1 | Tool/runtime error |
+| 2 | SemVer policy failure |
+| 3 | Warnings treated as failures (warn-as-fail) |
 
 See [Exit Codes](./exit-codes.md) for detailed descriptions.
 

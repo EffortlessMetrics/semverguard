@@ -13,6 +13,8 @@
 
 /// Error types for semverguard operations.
 pub mod error;
+/// Failure classification helpers.
+pub mod classification;
 /// Mock/fake implementations of port traits for testing.
 ///
 /// This module is only available when the `test-utils` feature is enabled or in test builds.
@@ -26,6 +28,7 @@ pub mod progress;
 pub mod runner;
 
 pub use error::*;
+pub use classification::*;
 #[cfg(any(test, feature = "test-utils"))]
 pub use mocks::*;
 pub use ports::*;
