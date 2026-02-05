@@ -520,6 +520,7 @@ mod tests {
                     engine: None,
                     inferred_required_bump: Some(RequiredBump::Major),
                     failure_kind: Some(FailureKind::SemverViolation),
+                    baseline_error: None,
                 },
                 PackageReport {
                     name: "a-lib".to_string(),
@@ -532,6 +533,7 @@ mod tests {
                     engine: None,
                     inferred_required_bump: None,
                     failure_kind: None,
+                    baseline_error: None,
                 },
             ],
             summary: Summary {

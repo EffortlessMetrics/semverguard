@@ -1,0 +1,64 @@
+{
+  "semverguard_version": "0.1.0",
+  "started_at": "2024-01-15T10:00:00Z",
+  "finished_at": "2024-01-15T10:01:00Z",
+  "workspace_root": "/workspace",
+  "packages": [
+    {
+      "name": "lib-a",
+      "version": "1.0.0",
+      "manifest_path": "/workspace/crates/lib-a/Cargo.toml",
+      "status": "passed",
+      "skip_reason": null,
+      "duration_ms": 500,
+      "command": ["cargo", "semver-checks", "check-release"],
+      "engine": {
+        "exit_code": 0,
+        "success": true,
+        "stdout": "No breaking changes detected",
+        "stderr": "",
+        "required_bump": null
+      },
+      "inferred_required_bump": null,
+      "failure_kind": null,
+      "baseline_error": null
+    },
+    {
+      "name": "lib-b",
+      "version": "2.0.0",
+      "manifest_path": "/workspace/crates/lib-b/Cargo.toml",
+      "status": "failed",
+      "skip_reason": null,
+      "duration_ms": 1000,
+      "command": ["cargo", "semver-checks", "check-release"],
+      "engine": {
+        "exit_code": 1,
+        "success": false,
+        "stdout": "",
+        "stderr": "Major version bump required due to breaking changes",
+        "required_bump": "major"
+      },
+      "inferred_required_bump": "major",
+      "failure_kind": "semver-violation",
+      "baseline_error": null
+    },
+    {
+      "name": "lib-c",
+      "version": "0.1.0",
+      "manifest_path": "/workspace/crates/lib-c/Cargo.toml",
+      "status": "skipped",
+      "skip_reason": "publish = false",
+      "duration_ms": 0,
+      "command": [],
+      "engine": null,
+      "inferred_required_bump": null,
+      "failure_kind": null
+    }
+  ],
+  "summary": {
+    "total": 3,
+    "passed": 1,
+    "failed": 1,
+    "skipped": 1
+  }
+}

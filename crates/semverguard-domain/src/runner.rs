@@ -1,4 +1,6 @@
-use crate::classification::{classify_engine_error, classify_output};
+use crate::classification::{
+    classify_engine_error_detailed, classify_output_detailed, ClassificationResult,
+};
 use crate::error::{Result, SemverguardError};
 use crate::ports::{GitProvider, SemverEngine, WorkspaceProvider};
 use crate::progress::{NoopProgressCallback, ProgressCallback, ProgressEvent};
@@ -234,10 +236,10 @@ impl<'a> SemverguardRunner<'a> {
                         duration_ms,
                     });
 
-                    let failure_kind = if success {
+                    let classification = if success {
                         None
                     } else {
-                        Some(classify_output(&output))
+                        Some(classify_output_detailed(&output, Some(&pkg.name)))
                     };
 
                     reports.push(PackageReport {
@@ -250,7 +252,8 @@ impl<'a> SemverguardRunner<'a> {
                         command,
                         inferred_required_bump: output.required_bump,
                         engine: Some(output),
-                        failure_kind,
+                        failure_kind: classification.as_ref().map(|c| c.kind),
+                        baseline_error: classification.and_then(|c| c.baseline_cause),
                     });
 
                     if !success && config.engine.fail_fast {
@@ -264,6 +267,9 @@ impl<'a> SemverguardRunner<'a> {
                         duration_ms,
                     });
 
+                    let classification =
+                        classify_engine_error_detailed(&e, Some(&pkg.name));
+
                     reports.push(PackageReport {
                         name: pkg.name.clone(),
                         version: pkg.version.to_string(),
@@ -274,7 +280,8 @@ impl<'a> SemverguardRunner<'a> {
                         command: vec![],
                         inferred_required_bump: None,
                         engine: None,
-                        failure_kind: Some(classify_engine_error(&e)),
+                        failure_kind: Some(classification.kind),
+                        baseline_error: classification.baseline_cause,
                     });
 
                     if config.engine.fail_fast {
@@ -452,6 +459,7 @@ fn skipped(pkg: &WorkspacePackage, reason: &str) -> PackageReport {
         inferred_required_bump: None,
         engine: None,
         failure_kind: None,
+        baseline_error: None,
     }
 }
 
@@ -1982,6 +1990,7 @@ mod tests {
                 engine: None,
                 inferred_required_bump: None,
                 failure_kind: None,
+                baseline_error: None,
             },
             PackageReport {
                 name: "b".to_string(),
@@ -1994,6 +2003,7 @@ mod tests {
                 engine: None,
                 inferred_required_bump: None,
                 failure_kind: None,
+                baseline_error: None,
             },
         ];
         let summary = summarize(&reports);
@@ -2016,6 +2026,7 @@ mod tests {
             engine: None,
             inferred_required_bump: None,
             failure_kind: Some(FailureKind::Unknown),
+            baseline_error: None,
         }];
         let summary = summarize(&reports);
         assert_eq!(summary.total, 1);
@@ -2037,6 +2048,7 @@ mod tests {
             engine: None,
             inferred_required_bump: None,
             failure_kind: None,
+            baseline_error: None,
         }];
         let summary = summarize(&reports);
         assert_eq!(summary.total, 1);
@@ -2059,6 +2071,7 @@ mod tests {
                 engine: None,
                 inferred_required_bump: None,
                 failure_kind: None,
+                baseline_error: None,
             },
             PackageReport {
                 name: "b".to_string(),
@@ -2071,6 +2084,7 @@ mod tests {
                 engine: None,
                 inferred_required_bump: None,
                 failure_kind: Some(FailureKind::Unknown),
+                baseline_error: None,
             },
             PackageReport {
                 name: "c".to_string(),
@@ -2083,6 +2097,7 @@ mod tests {
                 engine: None,
                 inferred_required_bump: None,
                 failure_kind: None,
+                baseline_error: None,
             },
         ];
         let summary = summarize(&reports);

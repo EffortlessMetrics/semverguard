@@ -44,6 +44,7 @@ fn sample_report() -> RunReport {
                 }),
                 inferred_required_bump: Some(RequiredBump::Major),
                 failure_kind: Some(FailureKind::SemverViolation),
+                baseline_error: None,
             },
             PackageReport {
                 name: "beta".to_string(),
@@ -68,6 +69,7 @@ fn sample_report() -> RunReport {
                 }),
                 inferred_required_bump: None,
                 failure_kind: Some(FailureKind::BaselineError),
+                baseline_error: None,
             },
             PackageReport {
                 name: "gamma".to_string(),
@@ -80,6 +82,7 @@ fn sample_report() -> RunReport {
                 engine: None,
                 inferred_required_bump: None,
                 failure_kind: None,
+                baseline_error: None,
             },
         ],
         summary: Summary {

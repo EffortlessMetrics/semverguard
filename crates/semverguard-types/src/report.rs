@@ -19,6 +19,17 @@ pub struct RunReport {
     pub summary: Summary,
 }
 
+impl RunReport {
+    /// Sort packages by name for deterministic output ordering.
+    ///
+    /// This ensures JSON output is stable across runs when package
+    /// discovery order may vary.
+    pub fn sort_packages_by_name(&mut self) {
+        self.packages
+            .sort_by(|a, b| (&a.name, &a.version).cmp(&(&b.name, &b.version)));
+    }
+}
+
 /// Summary of a run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Summary {
@@ -63,6 +74,9 @@ pub struct PackageReport {
     /// Failure classification (for failed packages).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_kind: Option<FailureKind>,
+    /// Detailed baseline error cause (when failure_kind is BaselineError).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline_error: Option<BaselineErrorCause>,
 }
 
 /// Result classification for a package.
@@ -91,6 +105,143 @@ pub enum FailureKind {
     Unknown,
 }
 
+/// Detailed baseline error causes.
+///
+/// These provide more specific information about why a baseline comparison failed,
+/// allowing for better error messages and configurable behavior.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BaselineErrorCause {
+    /// The specified git revision does not exist.
+    ///
+    /// Common causes:
+    /// - Typo in the revision name
+    /// - Shallow clone missing the commit
+    /// - Branch/tag was deleted
+    RevisionNotFound {
+        /// The revision that was requested.
+        rev: String,
+    },
+
+    /// The crate did not exist in the baseline.
+    ///
+    /// This is expected for new crates being added to the workspace.
+    /// Usually should be treated as a warning, not a failure.
+    CrateAbsentFromBaseline {
+        /// Name of the crate that was not found.
+        crate_name: String,
+    },
+
+    /// The git repository is a shallow clone and cannot resolve the baseline.
+    ///
+    /// Common in CI environments. Fix by fetching with `--unshallow` or
+    /// specifying a depth that includes the baseline commit.
+    ShallowClone {
+        /// Additional context about the shallow clone issue.
+        detail: Option<String>,
+    },
+
+    /// Could not compute merge base between baseline and current.
+    ///
+    /// This can happen when:
+    /// - The baseline branch has no common ancestor with current
+    /// - Git history is incomplete
+    MergeBaseNotFound {
+        /// The base revision.
+        base: String,
+        /// The head revision.
+        head: String,
+    },
+
+    /// The baseline rustdoc JSON could not be generated.
+    ///
+    /// This can happen due to:
+    /// - Toolchain mismatch (wrong nightly version)
+    /// - Compilation errors in baseline code
+    /// - Missing dependencies in baseline
+    RustdocGenerationFailed {
+        /// Additional error details.
+        detail: Option<String>,
+    },
+
+    /// The crate is not published to crates.io.
+    ///
+    /// This happens when using `baseline.kind = "crates-io"` but the crate
+    /// has never been published or the specified version doesn't exist.
+    NotPublished {
+        /// Name of the crate.
+        crate_name: String,
+        /// Version that was requested (if any).
+        version: Option<String>,
+    },
+
+    /// Generic baseline error with a message.
+    ///
+    /// Used when the error doesn't fit other categories.
+    Other {
+        /// Error message.
+        message: String,
+    },
+}
+
+impl std::fmt::Display for BaselineErrorCause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RevisionNotFound { rev } => {
+                write!(f, "git revision '{}' not found", rev)
+            }
+            Self::CrateAbsentFromBaseline { crate_name } => {
+                write!(f, "crate '{}' does not exist in baseline", crate_name)
+            }
+            Self::ShallowClone { detail } => {
+                write!(f, "shallow clone cannot resolve baseline")?;
+                if let Some(d) = detail {
+                    write!(f, ": {}", d)?;
+                }
+                Ok(())
+            }
+            Self::MergeBaseNotFound { base, head } => {
+                write!(f, "no merge base found between '{}' and '{}'", base, head)
+            }
+            Self::RustdocGenerationFailed { detail } => {
+                write!(f, "failed to generate baseline rustdoc")?;
+                if let Some(d) = detail {
+                    write!(f, ": {}", d)?;
+                }
+                Ok(())
+            }
+            Self::NotPublished { crate_name, version } => {
+                write!(f, "crate '{}' not published to crates.io", crate_name)?;
+                if let Some(v) = version {
+                    write!(f, " (version {})", v)?;
+                }
+                Ok(())
+            }
+            Self::Other { message } => write!(f, "{}", message),
+        }
+    }
+}
+
+impl BaselineErrorCause {
+    /// Returns true if this error is typically expected and should be treated as a warning.
+    ///
+    /// For example, a new crate that doesn't exist in the baseline is expected
+    /// behavior, not a real failure.
+    pub fn is_expected(&self) -> bool {
+        matches!(self, Self::CrateAbsentFromBaseline { .. })
+    }
+
+    /// Returns true if this error is likely recoverable with CI configuration changes.
+    ///
+    /// For example, shallow clone issues can be fixed by fetching more history.
+    pub fn is_ci_recoverable(&self) -> bool {
+        matches!(
+            self,
+            Self::ShallowClone { .. } | Self::MergeBaseNotFound { .. }
+        )
+    }
+}
+
 /// Result of listing packages without running checks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ListResult {
@@ -102,8 +253,21 @@ pub struct ListResult {
     pub would_skip: Vec<SkippedPackage>,
 }
 
+impl ListResult {
+    /// Sort all package lists by name for deterministic output ordering.
+    ///
+    /// This ensures JSON output is stable across runs when package
+    /// discovery order may vary.
+    pub fn sort_packages_by_name(&mut self) {
+        self.would_check
+            .sort_by(|a, b| (&a.name, &a.version).cmp(&(&b.name, &b.version)));
+        self.would_skip
+            .sort_by(|a, b| (&a.name, &a.version).cmp(&(&b.name, &b.version)));
+    }
+}
+
 /// A package that would be checked.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListedPackage {
     /// Cargo package name.
     pub name: String,
@@ -114,7 +278,7 @@ pub struct ListedPackage {
 }
 
 /// A package that would be skipped.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkippedPackage {
     /// Cargo package name.
     pub name: String,
@@ -302,6 +466,7 @@ mod tests {
             }),
             inferred_required_bump: None,
             failure_kind: None,
+            baseline_error: None,
         };
 
         assert_eq!(report.name, "mylib");
@@ -334,6 +499,7 @@ mod tests {
             }),
             inferred_required_bump: Some(RequiredBump::Major),
             failure_kind: Some(FailureKind::SemverViolation),
+            baseline_error: None,
         };
 
         assert_eq!(report.status, PackageStatus::Failed);
@@ -356,6 +522,7 @@ mod tests {
             engine: None,
             inferred_required_bump: None,
             failure_kind: None,
+            baseline_error: None,
         };
 
         assert_eq!(report.status, PackageStatus::Skipped);
@@ -382,6 +549,7 @@ mod tests {
             }),
             inferred_required_bump: None,
             failure_kind: None,
+            baseline_error: None,
         };
 
         let json = serde_json::to_string(&original).unwrap();
@@ -416,6 +584,7 @@ mod tests {
                     engine: None,
                     inferred_required_bump: None,
                     failure_kind: None,
+                    baseline_error: None,
                 },
                 PackageReport {
                     name: "lib-b".to_string(),
@@ -434,6 +603,7 @@ mod tests {
                     }),
                     inferred_required_bump: Some(RequiredBump::Minor),
                     failure_kind: Some(FailureKind::SemverViolation),
+                    baseline_error: None,
                 },
             ],
             summary: Summary {
@@ -539,6 +709,7 @@ mod tests {
                 engine: None,
                 inferred_required_bump: None,
                 failure_kind: None,
+                baseline_error: None,
             },
             PackageReport {
                 name: "b".to_string(),
@@ -551,6 +722,7 @@ mod tests {
                 engine: None,
                 inferred_required_bump: None,
                 failure_kind: Some(FailureKind::Unknown),
+                baseline_error: None,
             },
             PackageReport {
                 name: "c".to_string(),
@@ -563,6 +735,7 @@ mod tests {
                 engine: None,
                 inferred_required_bump: None,
                 failure_kind: None,
+                baseline_error: None,
             },
         ];
 
@@ -591,6 +764,7 @@ mod tests {
             engine: None,
             inferred_required_bump: None,
             failure_kind: None,
+            baseline_error: None,
         };
 
         let json = serde_json::to_string(&report).unwrap();
@@ -639,11 +813,356 @@ mod tests {
             engine: None,
             inferred_required_bump: None,
             failure_kind: None,
+            baseline_error: None,
         };
 
         let json = serde_json::to_string(&report).unwrap();
         let deserialized: PackageReport = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.duration_ms, u128::MAX);
+    }
+
+    // =========================================================================
+    // BaselineErrorCause tests
+    // =========================================================================
+
+    #[test]
+    fn test_baseline_error_cause_revision_not_found() {
+        let cause = BaselineErrorCause::RevisionNotFound {
+            rev: "origin/missing".to_string(),
+        };
+        assert_eq!(
+            cause.to_string(),
+            "git revision 'origin/missing' not found"
+        );
+        assert!(!cause.is_expected());
+        assert!(!cause.is_ci_recoverable());
+    }
+
+    #[test]
+    fn test_baseline_error_cause_crate_absent() {
+        let cause = BaselineErrorCause::CrateAbsentFromBaseline {
+            crate_name: "new-crate".to_string(),
+        };
+        assert_eq!(
+            cause.to_string(),
+            "crate 'new-crate' does not exist in baseline"
+        );
+        assert!(cause.is_expected());
+        assert!(!cause.is_ci_recoverable());
+    }
+
+    #[test]
+    fn test_baseline_error_cause_shallow_clone() {
+        let cause = BaselineErrorCause::ShallowClone {
+            detail: Some("fetch depth 1".to_string()),
+        };
+        assert_eq!(
+            cause.to_string(),
+            "shallow clone cannot resolve baseline: fetch depth 1"
+        );
+        assert!(!cause.is_expected());
+        assert!(cause.is_ci_recoverable());
+
+        let cause_no_detail = BaselineErrorCause::ShallowClone { detail: None };
+        assert_eq!(
+            cause_no_detail.to_string(),
+            "shallow clone cannot resolve baseline"
+        );
+    }
+
+    #[test]
+    fn test_baseline_error_cause_merge_base_not_found() {
+        let cause = BaselineErrorCause::MergeBaseNotFound {
+            base: "origin/main".to_string(),
+            head: "HEAD".to_string(),
+        };
+        assert_eq!(
+            cause.to_string(),
+            "no merge base found between 'origin/main' and 'HEAD'"
+        );
+        assert!(!cause.is_expected());
+        assert!(cause.is_ci_recoverable());
+    }
+
+    #[test]
+    fn test_baseline_error_cause_rustdoc_generation_failed() {
+        let cause = BaselineErrorCause::RustdocGenerationFailed {
+            detail: Some("nightly toolchain required".to_string()),
+        };
+        assert_eq!(
+            cause.to_string(),
+            "failed to generate baseline rustdoc: nightly toolchain required"
+        );
+        assert!(!cause.is_expected());
+        assert!(!cause.is_ci_recoverable());
+    }
+
+    #[test]
+    fn test_baseline_error_cause_not_published() {
+        let cause = BaselineErrorCause::NotPublished {
+            crate_name: "my-crate".to_string(),
+            version: Some("1.0.0".to_string()),
+        };
+        assert_eq!(
+            cause.to_string(),
+            "crate 'my-crate' not published to crates.io (version 1.0.0)"
+        );
+        assert!(!cause.is_expected());
+        assert!(!cause.is_ci_recoverable());
+
+        let cause_no_version = BaselineErrorCause::NotPublished {
+            crate_name: "my-crate".to_string(),
+            version: None,
+        };
+        assert_eq!(
+            cause_no_version.to_string(),
+            "crate 'my-crate' not published to crates.io"
+        );
+    }
+
+    #[test]
+    fn test_baseline_error_cause_other() {
+        let cause = BaselineErrorCause::Other {
+            message: "some unknown error".to_string(),
+        };
+        assert_eq!(cause.to_string(), "some unknown error");
+        assert!(!cause.is_expected());
+        assert!(!cause.is_ci_recoverable());
+    }
+
+    #[test]
+    fn test_baseline_error_cause_json_roundtrip() {
+        let causes = vec![
+            BaselineErrorCause::RevisionNotFound {
+                rev: "v1.0.0".to_string(),
+            },
+            BaselineErrorCause::CrateAbsentFromBaseline {
+                crate_name: "new-crate".to_string(),
+            },
+            BaselineErrorCause::ShallowClone {
+                detail: Some("depth 1".to_string()),
+            },
+            BaselineErrorCause::MergeBaseNotFound {
+                base: "main".to_string(),
+                head: "HEAD".to_string(),
+            },
+            BaselineErrorCause::RustdocGenerationFailed {
+                detail: None,
+            },
+            BaselineErrorCause::NotPublished {
+                crate_name: "my-crate".to_string(),
+                version: Some("2.0.0".to_string()),
+            },
+            BaselineErrorCause::Other {
+                message: "custom error".to_string(),
+            },
+        ];
+
+        for cause in causes {
+            let json = serde_json::to_string(&cause).unwrap();
+            let deserialized: BaselineErrorCause = serde_json::from_str(&json).unwrap();
+            assert_eq!(cause, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_package_report_with_baseline_error() {
+        let report = PackageReport {
+            name: "failing-crate".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: PathBuf::from("/workspace/Cargo.toml"),
+            status: PackageStatus::Failed,
+            skip_reason: None,
+            duration_ms: 100,
+            command: vec!["cargo".to_string(), "semver-checks".to_string()],
+            engine: None,
+            inferred_required_bump: None,
+            failure_kind: Some(FailureKind::BaselineError),
+            baseline_error: Some(BaselineErrorCause::ShallowClone {
+                detail: Some("CI clone depth 1".to_string()),
+            }),
+        };
+
+        let json = serde_json::to_string(&report).unwrap();
+        let deserialized: PackageReport = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.failure_kind, Some(FailureKind::BaselineError));
+        assert!(deserialized.baseline_error.is_some());
+        if let Some(BaselineErrorCause::ShallowClone { detail }) = deserialized.baseline_error {
+            assert_eq!(detail, Some("CI clone depth 1".to_string()));
+        } else {
+            panic!("Expected ShallowClone variant");
+        }
+    }
+
+    // =========================================================================
+    // Deterministic ordering tests
+    // =========================================================================
+
+    #[test]
+    fn test_run_report_sort_packages_by_name() {
+        let mut report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:00:01Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![
+                PackageReport {
+                    name: "zebra".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/zebra/Cargo.toml"),
+                    status: PackageStatus::Passed,
+                    skip_reason: None,
+                    duration_ms: 100,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: None,
+                    baseline_error: None,
+                },
+                PackageReport {
+                    name: "alpha".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/alpha/Cargo.toml"),
+                    status: PackageStatus::Passed,
+                    skip_reason: None,
+                    duration_ms: 100,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: None,
+                    baseline_error: None,
+                },
+                PackageReport {
+                    name: "beta".to_string(),
+                    version: "2.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/beta/Cargo.toml"),
+                    status: PackageStatus::Failed,
+                    skip_reason: None,
+                    duration_ms: 200,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: None,
+                    baseline_error: None,
+                },
+                PackageReport {
+                    name: "beta".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/beta-old/Cargo.toml"),
+                    status: PackageStatus::Skipped,
+                    skip_reason: Some("filtered".to_string()),
+                    duration_ms: 0,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: None,
+                    baseline_error: None,
+                },
+            ],
+            summary: Summary {
+                total: 4,
+                passed: 2,
+                failed: 1,
+                skipped: 1,
+            },
+        };
+
+        report.sort_packages_by_name();
+
+        assert_eq!(report.packages[0].name, "alpha");
+        assert_eq!(report.packages[1].name, "beta");
+        assert_eq!(report.packages[1].version, "1.0.0"); // Sorted by version too
+        assert_eq!(report.packages[2].name, "beta");
+        assert_eq!(report.packages[2].version, "2.0.0");
+        assert_eq!(report.packages[3].name, "zebra");
+    }
+
+    #[test]
+    fn test_list_result_sort_packages_by_name() {
+        let mut result = ListResult {
+            workspace_root: PathBuf::from("/workspace"),
+            would_check: vec![
+                ListedPackage {
+                    name: "zebra".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/zebra/Cargo.toml"),
+                },
+                ListedPackage {
+                    name: "alpha".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/alpha/Cargo.toml"),
+                },
+            ],
+            would_skip: vec![
+                SkippedPackage {
+                    name: "omega".to_string(),
+                    version: "0.1.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/omega/Cargo.toml"),
+                    reason: "publish = false".to_string(),
+                },
+                SkippedPackage {
+                    name: "gamma".to_string(),
+                    version: "0.1.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/gamma/Cargo.toml"),
+                    reason: "no lib target".to_string(),
+                },
+            ],
+        };
+
+        result.sort_packages_by_name();
+
+        assert_eq!(result.would_check[0].name, "alpha");
+        assert_eq!(result.would_check[1].name, "zebra");
+        assert_eq!(result.would_skip[0].name, "gamma");
+        assert_eq!(result.would_skip[1].name, "omega");
+    }
+
+    #[test]
+    fn test_listed_package_equality() {
+        let pkg1 = ListedPackage {
+            name: "test".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: PathBuf::from("/test/Cargo.toml"),
+        };
+        let pkg2 = ListedPackage {
+            name: "test".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: PathBuf::from("/test/Cargo.toml"),
+        };
+        let pkg3 = ListedPackage {
+            name: "other".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: PathBuf::from("/other/Cargo.toml"),
+        };
+
+        assert_eq!(pkg1, pkg2);
+        assert_ne!(pkg1, pkg3);
+    }
+
+    #[test]
+    fn test_skipped_package_equality() {
+        let pkg1 = SkippedPackage {
+            name: "test".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: PathBuf::from("/test/Cargo.toml"),
+            reason: "publish = false".to_string(),
+        };
+        let pkg2 = SkippedPackage {
+            name: "test".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: PathBuf::from("/test/Cargo.toml"),
+            reason: "publish = false".to_string(),
+        };
+        let pkg3 = SkippedPackage {
+            name: "test".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: PathBuf::from("/test/Cargo.toml"),
+            reason: "different reason".to_string(),
+        };
+
+        assert_eq!(pkg1, pkg2);
+        assert_ne!(pkg1, pkg3);
     }
 }

@@ -5,8 +5,8 @@ use semverguard_domain::SemverguardRunner;
 use semverguard_engine::CargoSemverChecksEngine;
 use semverguard_git::GitCli;
 use semverguard_types::{
-    BaselineKind, FailureKind, ListResult, OutputFormat, PackageStatus, RunReport, ScopeMode,
-    SemverguardConfig,
+    BaselineKind, FailureKind, ListResult, OutputFormat, PackageStatus, RunMode, RunReport,
+    ScopeMode, SemverguardConfig,
 };
 use semverguard_workspace::CargoMetadataWorkspace;
 use std::fs;
@@ -95,6 +95,15 @@ struct CheckArgs {
     /// Workspace root (defaults to .)
     #[arg(long, default_value = ".")]
     workspace_root: PathBuf,
+
+    /// Run mode: pr, release, or auto (default).
+    ///
+    /// Modes provide sensible default behaviors for common CI scenarios:
+    /// - pr: For pull request lanes. Baseline errors -> warn and skip.
+    /// - release: For release/tag lanes. Strict enforcement.
+    /// - auto: Detect from CI environment variables (GITHUB_REF, CI_COMMIT_TAG, etc.)
+    #[arg(long, value_enum)]
+    mode: Option<RunModeOpt>,
 
     /// Use git baseline selection (`--baseline-rev` passed to cargo-semver-checks).
     #[arg(long)]
@@ -197,6 +206,27 @@ impl From<FormatOpt> for OutputFormat {
     }
 }
 
+/// Run mode choice for CLI.
+#[derive(Clone, Debug, ValueEnum)]
+enum RunModeOpt {
+    /// Automatically detect mode from CI environment (default).
+    Auto,
+    /// Pull request mode: tolerant of baseline errors.
+    Pr,
+    /// Release mode: strict enforcement.
+    Release,
+}
+
+impl From<RunModeOpt> for RunMode {
+    fn from(v: RunModeOpt) -> Self {
+        match v {
+            RunModeOpt::Auto => RunMode::Auto,
+            RunModeOpt::Pr => RunMode::Pr,
+            RunModeOpt::Release => RunMode::Release,
+        }
+    }
+}
+
 fn main() -> std::process::ExitCode {
     let exit_code = match run() {
         Ok(code) => code,
@@ -270,6 +300,11 @@ fn print_config(cfg: &SemverguardConfig) -> Result<()> {
 }
 
 fn apply_cli_overrides(cfg: &mut SemverguardConfig, args: &CheckArgs) {
+    // Apply mode from CLI (takes precedence over config file)
+    if let Some(mode) = &args.mode {
+        cfg.mode = mode.clone().into();
+    }
+
     if args.changed {
         cfg.scope.mode = semverguard_types::ScopeMode::Changed;
     }
@@ -437,8 +472,15 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
         return Ok(code);
     }
 
+    // Resolve the run mode (auto-detect from environment if needed)
+    let resolved_mode = config.mode.resolve();
+
     emit_outputs(&config, &report)?;
-    Ok(exit_code_from_report(&report, config.output.warn_as_fail))
+    Ok(exit_code_from_report(
+        &report,
+        resolved_mode,
+        config.output.warn_as_fail,
+    ))
 }
 
 fn handle_tool_error(
@@ -479,7 +521,11 @@ fn handle_tool_error(
     Ok(code)
 }
 
-fn exit_code_from_report(report: &RunReport, warn_as_fail: bool) -> i32 {
+fn exit_code_from_report(
+    report: &RunReport,
+    resolved_mode: RunMode,
+    warn_as_fail: bool,
+) -> i32 {
     let mut has_tool_error_flag = false;
     let mut has_semver_violation = false;
     let mut has_baseline_error = false;
@@ -500,10 +546,13 @@ fn exit_code_from_report(report: &RunReport, warn_as_fail: bool) -> i32 {
     } else if has_semver_violation {
         2
     } else if has_baseline_error {
-        if warn_as_fail {
-            3
-        } else {
+        // In Pr mode, baseline errors are warnings (exit 0 unless warn_as_fail is set)
+        // In Release mode, baseline errors are failures (exit 3)
+        let baseline_errors_are_warnings = resolved_mode.baseline_errors_are_warnings();
+        if baseline_errors_are_warnings && !warn_as_fail {
             0
+        } else {
+            3
         }
     } else {
         0

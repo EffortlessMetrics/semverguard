@@ -281,6 +281,7 @@ mod tests {
                 rev: Some("v1.0.0".to_string()),
                 root: None,
                 rustdoc: None,
+                on_error: crate::BaselineErrorBehavior::default(),
             },
             features: FeaturesConfig {
                 all_features: true,

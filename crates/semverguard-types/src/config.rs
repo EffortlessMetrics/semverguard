@@ -1,12 +1,122 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Run mode for semverguard.
+///
+/// Modes provide sensible default behaviors for common CI scenarios:
+/// - `Pr` mode: For pull request lanes, tolerant of baseline errors
+/// - `Release` mode: For release/tag lanes, strict enforcement
+/// - `Auto` mode: Detect from CI environment variables
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RunMode {
+    /// Automatically detect mode from CI environment variables.
+    ///
+    /// Detection order:
+    /// 1. If `CI_COMMIT_TAG` or `GITHUB_REF` contains `refs/tags/` -> Release mode
+    /// 2. If `GITHUB_EVENT_NAME` is `pull_request` -> Pr mode
+    /// 3. If `CI_PIPELINE_SOURCE` is `merge_request_event` -> Pr mode
+    /// 4. Otherwise -> Pr mode (safe default)
+    #[default]
+    Auto,
+    /// Pull request mode: tolerant of baseline errors.
+    ///
+    /// Behavior:
+    /// - Baseline errors -> warn and skip (don't fail CI)
+    /// - Good default for `--changed` scope
+    /// - Designed for PR validation lanes
+    Pr,
+    /// Release mode: strict enforcement.
+    ///
+    /// Behavior:
+    /// - Always run
+    /// - Baseline errors -> fail (strict)
+    /// - Good default for `--workspace` scope
+    /// - Designed for release/tag lanes
+    Release,
+}
+
+impl RunMode {
+    /// Detect the run mode from environment variables.
+    ///
+    /// Returns the detected mode, or `Pr` if detection is ambiguous.
+    pub fn detect_from_env() -> RunMode {
+        // GitHub Actions: check for tag ref
+        if let Ok(github_ref) = std::env::var("GITHUB_REF") {
+            if github_ref.starts_with("refs/tags/") {
+                return RunMode::Release;
+            }
+        }
+
+        // GitLab CI: check for commit tag
+        if std::env::var("CI_COMMIT_TAG").is_ok() {
+            return RunMode::Release;
+        }
+
+        // GitHub Actions: check for pull_request event
+        if let Ok(event_name) = std::env::var("GITHUB_EVENT_NAME") {
+            if event_name == "pull_request" || event_name == "pull_request_target" {
+                return RunMode::Pr;
+            }
+        }
+
+        // GitLab CI: check for merge request pipeline
+        if let Ok(source) = std::env::var("CI_PIPELINE_SOURCE") {
+            if source == "merge_request_event" {
+                return RunMode::Pr;
+            }
+        }
+
+        // Azure DevOps: check for pull request
+        if std::env::var("SYSTEM_PULLREQUEST_PULLREQUESTID").is_ok() {
+            return RunMode::Pr;
+        }
+
+        // CircleCI: check for pull request
+        if std::env::var("CIRCLE_PULL_REQUEST").is_ok() {
+            return RunMode::Pr;
+        }
+
+        // Default to Pr mode (safer for CI)
+        RunMode::Pr
+    }
+
+    /// Resolve Auto mode to a concrete mode using environment detection.
+    pub fn resolve(self) -> RunMode {
+        match self {
+            RunMode::Auto => RunMode::detect_from_env(),
+            other => other,
+        }
+    }
+
+    /// Returns true if baseline errors should be treated as warnings.
+    ///
+    /// In Pr mode, baseline errors are warnings (don't fail CI).
+    /// In Release mode, baseline errors are failures.
+    pub fn baseline_errors_are_warnings(&self) -> bool {
+        matches!(self.resolve(), RunMode::Pr)
+    }
+
+    /// Returns the suggested default scope mode for this run mode.
+    pub fn suggested_scope_mode(&self) -> ScopeMode {
+        match self.resolve() {
+            RunMode::Pr | RunMode::Auto => ScopeMode::Changed,
+            RunMode::Release => ScopeMode::Workspace,
+        }
+    }
+}
+
 /// Top-level configuration for semverguard.
 ///
 /// Intended to be loaded from `semverguard.toml`, with CLI flags overriding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct SemverguardConfig {
+    /// Run mode (pr, release, auto).
+    ///
+    /// Modes provide sensible default behaviors for common CI scenarios.
+    pub mode: RunMode,
+
     /// Baseline selection for the SemVer comparison.
     pub baseline: BaselineConfig,
 
@@ -26,6 +136,7 @@ pub struct SemverguardConfig {
 impl Default for SemverguardConfig {
     fn default() -> Self {
         Self {
+            mode: RunMode::default(),
             baseline: BaselineConfig::default(),
             scope: ScopeConfig::default(),
             features: FeaturesConfig::default(),
@@ -83,6 +194,9 @@ pub struct BaselineConfig {
 
     /// Path to a pre-generated baseline rustdoc JSON (advanced/CI caching).
     pub rustdoc: Option<PathBuf>,
+
+    /// How to handle baseline errors (e.g., missing revision, new crate).
+    pub on_error: BaselineErrorBehavior,
 }
 
 impl Default for BaselineConfig {
@@ -93,8 +207,67 @@ impl Default for BaselineConfig {
             rev: None,
             root: None,
             rustdoc: None,
+            on_error: BaselineErrorBehavior::default(),
         }
     }
+}
+
+/// Behavior when a baseline error occurs.
+///
+/// Different baseline errors have different severity levels. This configuration
+/// allows controlling whether errors should fail the check or just warn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct BaselineErrorBehavior {
+    /// How to handle new crates that don't exist in the baseline.
+    ///
+    /// Default: `warn` (new crates are expected, not a failure)
+    pub new_crate: ErrorAction,
+
+    /// How to handle missing git revisions.
+    ///
+    /// Default: `fail` (misconfiguration should be fixed)
+    pub missing_revision: ErrorAction,
+
+    /// How to handle shallow clone issues.
+    ///
+    /// Default: `fail` (CI should be configured to fetch enough history)
+    pub shallow_clone: ErrorAction,
+
+    /// How to handle rustdoc generation failures.
+    ///
+    /// Default: `fail` (usually indicates toolchain or code issues)
+    pub rustdoc_failure: ErrorAction,
+
+    /// How to handle crates not published to crates.io.
+    ///
+    /// Default: `warn` (expected for internal/new crates)
+    pub not_published: ErrorAction,
+}
+
+impl Default for BaselineErrorBehavior {
+    fn default() -> Self {
+        Self {
+            new_crate: ErrorAction::Warn,
+            missing_revision: ErrorAction::Fail,
+            shallow_clone: ErrorAction::Fail,
+            rustdoc_failure: ErrorAction::Fail,
+            not_published: ErrorAction::Warn,
+        }
+    }
+}
+
+/// Action to take when an error occurs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ErrorAction {
+    /// Treat as a failure (exit code 1).
+    #[default]
+    Fail,
+    /// Emit a warning but continue (exit code 0 if no other failures).
+    Warn,
+    /// Skip silently without warning.
+    Skip,
 }
 
 /// Scoping configuration: which packages to run.
@@ -389,9 +562,67 @@ mod tests {
     #[test]
     fn test_semverguard_config_default() {
         let config = SemverguardConfig::default();
+        assert!(matches!(config.mode, RunMode::Auto));
         assert!(matches!(config.baseline.kind, BaselineKind::CratesIo));
         assert!(matches!(config.scope.mode, ScopeMode::Workspace));
         assert!(matches!(config.output.format, OutputFormat::Text));
+    }
+
+    // =========================================================================
+    // RunMode tests
+    // =========================================================================
+
+    #[test]
+    fn test_run_mode_default() {
+        let mode = RunMode::default();
+        assert!(matches!(mode, RunMode::Auto));
+    }
+
+    #[test]
+    fn test_run_mode_json_roundtrip() {
+        for mode in [RunMode::Auto, RunMode::Pr, RunMode::Release] {
+            let json = serde_json::to_string(&mode).unwrap();
+            let deserialized: RunMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(mode, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_run_mode_json_kebab_case() {
+        assert_eq!(serde_json::to_string(&RunMode::Auto).unwrap(), "\"auto\"");
+        assert_eq!(serde_json::to_string(&RunMode::Pr).unwrap(), "\"pr\"");
+        assert_eq!(
+            serde_json::to_string(&RunMode::Release).unwrap(),
+            "\"release\""
+        );
+    }
+
+    #[test]
+    fn test_run_mode_baseline_errors_are_warnings() {
+        assert!(RunMode::Pr.baseline_errors_are_warnings());
+        assert!(!RunMode::Release.baseline_errors_are_warnings());
+    }
+
+    #[test]
+    fn test_run_mode_suggested_scope_mode() {
+        assert!(matches!(
+            RunMode::Pr.suggested_scope_mode(),
+            ScopeMode::Changed
+        ));
+        assert!(matches!(
+            RunMode::Release.suggested_scope_mode(),
+            ScopeMode::Workspace
+        ));
+    }
+
+    #[test]
+    fn test_run_mode_resolve_pr() {
+        assert_eq!(RunMode::Pr.resolve(), RunMode::Pr);
+    }
+
+    #[test]
+    fn test_run_mode_resolve_release() {
+        assert_eq!(RunMode::Release.resolve(), RunMode::Release);
     }
 
     #[test]
@@ -497,6 +728,7 @@ mod tests {
             rev: Some("origin/main".to_string()),
             root: Some(PathBuf::from("/workspace")),
             rustdoc: Some(PathBuf::from("/docs/rustdoc.json")),
+            on_error: BaselineErrorBehavior::default(),
         };
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: BaselineConfig = serde_json::from_str(&json).unwrap();
@@ -642,6 +874,7 @@ mod tests {
         let toml_str = "";
         let config: SemverguardConfig = toml::from_str(toml_str).unwrap();
         // Should use all defaults
+        assert!(matches!(config.mode, RunMode::Auto));
         assert!(matches!(config.baseline.kind, BaselineKind::CratesIo));
         assert!(matches!(config.scope.mode, ScopeMode::Workspace));
     }
@@ -649,6 +882,8 @@ mod tests {
     #[test]
     fn test_semverguard_config_toml_full() {
         let toml_str = r#"
+mode = "release"
+
 [baseline]
 kind = "git"
 version = "2.0.0"
@@ -682,6 +917,9 @@ json_path = "report.json"
 pretty_json = false
 "#;
         let config: SemverguardConfig = toml::from_str(toml_str).unwrap();
+
+        // Mode
+        assert!(matches!(config.mode, RunMode::Release));
 
         // Baseline
         assert!(matches!(config.baseline.kind, BaselineKind::Git));
@@ -747,6 +985,21 @@ pretty_json = false
         let toml_str = r#"mode = "changed""#;
         let config: ScopeConfig = toml::from_str(toml_str).unwrap();
         assert!(matches!(config.mode, ScopeMode::Changed));
+    }
+
+    #[test]
+    fn test_run_mode_toml_kebab_case() {
+        let toml_str = r#"mode = "auto""#;
+        let config: SemverguardConfig = toml::from_str(toml_str).unwrap();
+        assert!(matches!(config.mode, RunMode::Auto));
+
+        let toml_str = r#"mode = "pr""#;
+        let config: SemverguardConfig = toml::from_str(toml_str).unwrap();
+        assert!(matches!(config.mode, RunMode::Pr));
+
+        let toml_str = r#"mode = "release""#;
+        let config: SemverguardConfig = toml::from_str(toml_str).unwrap();
+        assert!(matches!(config.mode, RunMode::Release));
     }
 
     #[test]
