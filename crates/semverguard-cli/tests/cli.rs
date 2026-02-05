@@ -1162,3 +1162,232 @@ mod concurrent_tests {
         }
     }
 }
+
+// =============================================================================
+// Section 8: CLI Override Precedence Tests
+// =============================================================================
+
+mod cli_override_precedence {
+    use super::*;
+
+    // -------------------------------------------------------------------------
+    // Test that CLI args override config file values
+    // These tests verify the config merging behavior by checking print-config
+    // output after providing CLI overrides (where applicable to print-config).
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_config_file_baseline_rev_is_preserved() {
+        // When config file has baseline.rev, print-config should show it
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let config_path = temp_dir.path().join("semverguard.toml");
+
+        let config_content = r#"
+[baseline]
+kind = "git"
+rev = "origin/develop"
+"#;
+        fs::write(&config_path, config_content).expect("failed to write");
+
+        semverguard()
+            .args(["print-config", "--config"])
+            .arg(&config_path)
+            .arg("--workspace-root")
+            .arg(temp_dir.path())
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("origin/develop"))
+            .stdout(predicate::str::contains("git"));
+    }
+
+    #[test]
+    fn test_config_changed_mode_is_preserved() {
+        // When config file has scope.mode = "changed", print-config should show it
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let config_path = temp_dir.path().join("semverguard.toml");
+
+        let config_content = r#"
+[scope]
+mode = "changed"
+"#;
+        fs::write(&config_path, config_content).expect("failed to write");
+
+        semverguard()
+            .args(["print-config", "--config"])
+            .arg(&config_path)
+            .arg("--workspace-root")
+            .arg(temp_dir.path())
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("changed"));
+    }
+
+    #[test]
+    fn test_config_engine_args_accumulate() {
+        // Multiple extra_args in config should all be preserved
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let config_path = temp_dir.path().join("semverguard.toml");
+
+        let config_content = r#"
+[engine]
+extra_args = ["--verbose", "--color=always", "--release-type=minor"]
+"#;
+        fs::write(&config_path, config_content).expect("failed to write");
+
+        semverguard()
+            .args(["print-config", "--config"])
+            .arg(&config_path)
+            .arg("--workspace-root")
+            .arg(temp_dir.path())
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("--verbose"))
+            .stdout(predicate::str::contains("--color=always"))
+            .stdout(predicate::str::contains("--release-type=minor"));
+    }
+
+    #[test]
+    fn test_partial_config_override_preserves_other_values() {
+        // When config sets multiple values, overriding one should preserve others
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let config_path = temp_dir.path().join("semverguard.toml");
+
+        let config_content = r#"
+[baseline]
+kind = "git"
+rev = "v1.0.0"
+
+[scope]
+mode = "workspace"
+include = ["lib-*"]
+exclude = ["*-test"]
+skip_publish_false = true
+skip_no_lib = true
+
+[engine]
+fail_fast = true
+extra_args = ["--verbose"]
+
+[output]
+format = "both"
+"#;
+        fs::write(&config_path, config_content).expect("failed to write");
+
+        // All values should be present in print-config output
+        semverguard()
+            .args(["print-config", "--config"])
+            .arg(&config_path)
+            .arg("--workspace-root")
+            .arg(temp_dir.path())
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("v1.0.0"))
+            .stdout(predicate::str::contains("lib-*"))
+            .stdout(predicate::str::contains("*-test"))
+            .stdout(predicate::str::contains("skip_publish_false = true"))
+            .stdout(predicate::str::contains("skip_no_lib = true"))
+            .stdout(predicate::str::contains("fail_fast = true"))
+            .stdout(predicate::str::contains("--verbose"))
+            .stdout(predicate::str::contains("both"));
+    }
+
+    #[test]
+    fn test_config_features_preserved() {
+        // Feature configuration should be fully preserved
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let config_path = temp_dir.path().join("semverguard.toml");
+
+        let config_content = r#"
+[features]
+all_features = true
+default_features = false
+only_explicit_features = true
+features = ["serde", "tokio"]
+baseline_features = ["old-feature"]
+current_features = ["new-feature"]
+"#;
+        fs::write(&config_path, config_content).expect("failed to write");
+
+        semverguard()
+            .args(["print-config", "--config"])
+            .arg(&config_path)
+            .arg("--workspace-root")
+            .arg(temp_dir.path())
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("all_features = true"))
+            .stdout(predicate::str::contains("default_features = false"))
+            .stdout(predicate::str::contains("only_explicit_features = true"))
+            .stdout(predicate::str::contains("serde"))
+            .stdout(predicate::str::contains("tokio"));
+    }
+
+    #[test]
+    fn test_config_with_baseline_version_uses_crates_io() {
+        // Setting baseline.version implies crates-io kind
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let config_path = temp_dir.path().join("semverguard.toml");
+
+        let config_content = r#"
+[baseline]
+version = "1.2.3"
+"#;
+        fs::write(&config_path, config_content).expect("failed to write");
+
+        semverguard()
+            .args(["print-config", "--config"])
+            .arg(&config_path)
+            .arg("--workspace-root")
+            .arg(temp_dir.path())
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("1.2.3"))
+            .stdout(predicate::str::contains("crates-io"));
+    }
+
+    #[test]
+    fn test_explicit_packages_config() {
+        // explicit_packages in scope should be preserved
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let config_path = temp_dir.path().join("semverguard.toml");
+
+        let config_content = r#"
+[scope]
+mode = "workspace"
+explicit_packages = ["my-lib", "my-core"]
+"#;
+        fs::write(&config_path, config_content).expect("failed to write");
+
+        semverguard()
+            .args(["print-config", "--config"])
+            .arg(&config_path)
+            .arg("--workspace-root")
+            .arg(temp_dir.path())
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("my-lib"))
+            .stdout(predicate::str::contains("my-core"));
+    }
+
+    #[test]
+    fn test_cargo_bin_config() {
+        // Custom cargo binary path should be preserved
+        let temp_dir = TempDir::new().expect("failed to create temp dir");
+        let config_path = temp_dir.path().join("semverguard.toml");
+
+        let config_content = r#"
+[engine]
+cargo_bin = "/custom/path/to/cargo"
+"#;
+        fs::write(&config_path, config_content).expect("failed to write");
+
+        semverguard()
+            .args(["print-config", "--config"])
+            .arg(&config_path)
+            .arg("--workspace-root")
+            .arg(temp_dir.path())
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("/custom/path/to/cargo"));
+    }
+}

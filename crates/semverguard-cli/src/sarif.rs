@@ -1044,4 +1044,359 @@ mod tests {
         assert!(matches!(result.level, SarifLevel::Warning));
         assert!(result.message.text.contains("Baseline error"));
     }
+
+    // =========================================================================
+    // Edge case tests
+    // =========================================================================
+
+    #[test]
+    fn test_all_packages_skipped_no_results() {
+        // When all packages are skipped, there should be no SARIF results
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:00:01Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![
+                PackageReport {
+                    name: "lib-a".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/lib-a/Cargo.toml"),
+                    status: PackageStatus::Skipped,
+                    skip_reason: Some("excluded by glob".to_string()),
+                    duration_ms: 0,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: None,
+                    baseline_error: None,
+                },
+                PackageReport {
+                    name: "lib-b".to_string(),
+                    version: "2.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/lib-b/Cargo.toml"),
+                    status: PackageStatus::Skipped,
+                    skip_reason: Some("unchanged".to_string()),
+                    duration_ms: 0,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: None,
+                    baseline_error: None,
+                },
+            ],
+            summary: Summary {
+                total: 2,
+                passed: 0,
+                failed: 0,
+                skipped: 2,
+            },
+        };
+
+        let sarif = report_to_sarif(&report);
+        assert!(sarif.runs[0].results.is_empty());
+        assert!(sarif.runs[0].invocations[0].execution_successful);
+    }
+
+    #[test]
+    fn test_multiple_failures_with_same_rule() {
+        // Multiple packages failing with same rule (Major bump required)
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![
+                PackageReport {
+                    name: "lib-a".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/lib-a/Cargo.toml"),
+                    status: PackageStatus::Failed,
+                    skip_reason: None,
+                    duration_ms: 100,
+                    command: vec!["cargo".to_string()],
+                    engine: None,
+                    inferred_required_bump: Some(RequiredBump::Major),
+                    failure_kind: Some(FailureKind::SemverViolation),
+                    baseline_error: None,
+                },
+                PackageReport {
+                    name: "lib-b".to_string(),
+                    version: "2.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/lib-b/Cargo.toml"),
+                    status: PackageStatus::Failed,
+                    skip_reason: None,
+                    duration_ms: 150,
+                    command: vec!["cargo".to_string()],
+                    engine: None,
+                    inferred_required_bump: Some(RequiredBump::Major),
+                    failure_kind: Some(FailureKind::SemverViolation),
+                    baseline_error: None,
+                },
+            ],
+            summary: Summary {
+                total: 2,
+                passed: 0,
+                failed: 2,
+                skipped: 0,
+            },
+        };
+
+        let sarif = report_to_sarif(&report);
+        assert_eq!(sarif.runs[0].results.len(), 2);
+
+        // Both should have the same rule ID
+        assert_eq!(sarif.runs[0].results[0].rule_id, RULE_SEMVER_MAJOR_REQUIRED);
+        assert_eq!(sarif.runs[0].results[1].rule_id, RULE_SEMVER_MAJOR_REQUIRED);
+
+        // But properties should differ
+        let props0 = sarif.runs[0].results[0].properties.as_ref().unwrap();
+        let props1 = sarif.runs[0].results[1].properties.as_ref().unwrap();
+        assert_ne!(props0.package_name, props1.package_name);
+    }
+
+    #[test]
+    fn test_mixed_failure_kinds_in_single_report() {
+        // Report with different failure kinds
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![
+                PackageReport {
+                    name: "lib-major".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/lib-major/Cargo.toml"),
+                    status: PackageStatus::Failed,
+                    skip_reason: None,
+                    duration_ms: 100,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: Some(RequiredBump::Major),
+                    failure_kind: Some(FailureKind::SemverViolation),
+                    baseline_error: None,
+                },
+                PackageReport {
+                    name: "lib-minor".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/lib-minor/Cargo.toml"),
+                    status: PackageStatus::Failed,
+                    skip_reason: None,
+                    duration_ms: 100,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: Some(RequiredBump::Minor),
+                    failure_kind: Some(FailureKind::SemverViolation),
+                    baseline_error: None,
+                },
+                PackageReport {
+                    name: "lib-tool-error".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/lib-tool-error/Cargo.toml"),
+                    status: PackageStatus::Failed,
+                    skip_reason: None,
+                    duration_ms: 50,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: Some(FailureKind::ToolError),
+                    baseline_error: None,
+                },
+                PackageReport {
+                    name: "lib-baseline".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/lib-baseline/Cargo.toml"),
+                    status: PackageStatus::Failed,
+                    skip_reason: None,
+                    duration_ms: 50,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: Some(FailureKind::BaselineError),
+                    baseline_error: None,
+                },
+            ],
+            summary: Summary {
+                total: 4,
+                passed: 0,
+                failed: 4,
+                skipped: 0,
+            },
+        };
+
+        let sarif = report_to_sarif(&report);
+        assert_eq!(sarif.runs[0].results.len(), 4);
+
+        // Verify different rules are used
+        let rule_ids: Vec<_> = sarif.runs[0]
+            .results
+            .iter()
+            .map(|r| r.rule_id.as_str())
+            .collect();
+        assert!(rule_ids.contains(&RULE_SEMVER_MAJOR_REQUIRED));
+        assert!(rule_ids.contains(&RULE_SEMVER_MINOR_REQUIRED));
+        assert!(rule_ids.contains(&RULE_TOOL_ERROR));
+        assert!(rule_ids.contains(&RULE_BASELINE_ERROR));
+    }
+
+    #[test]
+    fn test_special_characters_in_package_name() {
+        // Package names with special characters should be properly escaped in JSON
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![PackageReport {
+                name: "my_lib-core".to_string(), // underscore and hyphen
+                version: "1.0.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/my_lib-core/Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: None,
+                duration_ms: 100,
+                command: vec![],
+                engine: None,
+                inferred_required_bump: Some(RequiredBump::Major),
+                failure_kind: Some(FailureKind::SemverViolation),
+                baseline_error: None,
+            }],
+            summary: Summary {
+                total: 1,
+                passed: 0,
+                failed: 1,
+                skipped: 0,
+            },
+        };
+
+        let sarif = report_to_sarif(&report);
+        let json = sarif_to_json(&sarif, false).unwrap();
+
+        // Should be valid JSON with package name properly escaped
+        assert!(json.contains("my_lib-core"));
+        // Verify it's valid JSON by parsing
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed.is_object());
+    }
+
+    #[test]
+    fn test_windows_path_handling() {
+        // Test that Windows paths are converted to forward slashes
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("C:\\Users\\dev\\workspace"),
+            packages: vec![PackageReport {
+                name: "lib-a".to_string(),
+                version: "1.0.0".to_string(),
+                manifest_path: PathBuf::from("C:\\Users\\dev\\workspace\\lib-a\\Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: None,
+                duration_ms: 100,
+                command: vec![],
+                engine: None,
+                inferred_required_bump: Some(RequiredBump::Major),
+                failure_kind: Some(FailureKind::SemverViolation),
+                baseline_error: None,
+            }],
+            summary: Summary {
+                total: 1,
+                passed: 0,
+                failed: 1,
+                skipped: 0,
+            },
+        };
+
+        let sarif = report_to_sarif(&report);
+        let json = sarif_to_json(&sarif, false).unwrap();
+
+        // URIs should not contain backslashes
+        assert!(
+            !json.contains("\\\\"),
+            "URIs should not contain escaped backslashes"
+        );
+        // Should use forward slashes in the URI
+        assert!(json.contains("Cargo.toml"));
+    }
+
+    #[test]
+    fn test_patch_bump_level() {
+        // Test that patch bump gets Note severity
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![PackageReport {
+                name: "lib-patch".to_string(),
+                version: "1.0.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/lib-patch/Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: None,
+                duration_ms: 100,
+                command: vec![],
+                engine: None,
+                inferred_required_bump: Some(RequiredBump::Patch),
+                failure_kind: Some(FailureKind::SemverViolation),
+                baseline_error: None,
+            }],
+            summary: Summary {
+                total: 1,
+                passed: 0,
+                failed: 1,
+                skipped: 0,
+            },
+        };
+
+        let sarif = report_to_sarif(&report);
+        let result = &sarif.runs[0].results[0];
+
+        assert_eq!(result.rule_id, RULE_SEMVER_PATCH_REQUIRED);
+        assert!(matches!(result.level, SarifLevel::Note));
+        assert!(result.message.text.contains("patch version bump"));
+    }
+
+    #[test]
+    fn test_unknown_bump_level() {
+        // Test that unknown bump gets breaking-change rule
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![PackageReport {
+                name: "lib-unknown".to_string(),
+                version: "1.0.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/lib-unknown/Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: None,
+                duration_ms: 100,
+                command: vec![],
+                engine: None,
+                inferred_required_bump: Some(RequiredBump::Unknown),
+                failure_kind: Some(FailureKind::SemverViolation),
+                baseline_error: None,
+            }],
+            summary: Summary {
+                total: 1,
+                passed: 0,
+                failed: 1,
+                skipped: 0,
+            },
+        };
+
+        let sarif = report_to_sarif(&report);
+        let result = &sarif.runs[0].results[0];
+
+        assert_eq!(result.rule_id, RULE_SEMVER_BREAKING);
+        assert!(matches!(result.level, SarifLevel::Error));
+    }
+
+    #[test]
+    fn test_normalize_uri_str() {
+        assert_eq!(normalize_uri_str("foo\\bar\\baz"), "foo/bar/baz");
+        assert_eq!(normalize_uri_str("foo/bar/baz"), "foo/bar/baz");
+        assert_eq!(normalize_uri_str("C:\\Users\\dev"), "C:/Users/dev");
+    }
 }

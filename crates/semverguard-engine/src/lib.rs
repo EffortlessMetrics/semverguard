@@ -212,6 +212,7 @@ mod tests {
             rev: None,
             root: None,
             rustdoc: None,
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -232,6 +233,7 @@ mod tests {
             rev: None,
             root: None,
             rustdoc: None,
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -256,6 +258,7 @@ mod tests {
             rev: None,
             root: None,
             rustdoc: None,
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -275,6 +278,7 @@ mod tests {
             rev: Some("origin/main".to_string()),
             root: None,
             rustdoc: None,
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -295,6 +299,7 @@ mod tests {
             rev: Some("v1.0.0".to_string()),
             root: None,
             rustdoc: None,
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -313,6 +318,7 @@ mod tests {
             rev: Some("abc123def456".to_string()),
             root: None,
             rustdoc: None,
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -335,6 +341,7 @@ mod tests {
             rev: None,
             root: Some(PathBuf::from("/other/workspace")),
             rustdoc: None,
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -355,6 +362,7 @@ mod tests {
             rev: None,
             root: None,
             rustdoc: Some(PathBuf::from("/cached/rustdoc.json")),
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -375,6 +383,7 @@ mod tests {
             rev: Some("v2.0.0".to_string()),
             root: Some(PathBuf::from("/baseline/root")),
             rustdoc: Some(PathBuf::from("/baseline/rustdoc.json")),
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -701,6 +710,7 @@ mod tests {
                 rev: Some("v1.5.0".to_string()),
                 root: Some(PathBuf::from("/baseline/workspace")),
                 rustdoc: None,
+                ..Default::default()
             },
             features: FeaturesConfig {
                 all_features: false,
@@ -753,6 +763,7 @@ mod tests {
             rev: Some("should-be-ignored".to_string()), // This should be ignored
             root: None,
             rustdoc: None,
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -777,6 +788,7 @@ mod tests {
             rev: Some("main".to_string()),
             root: None,
             rustdoc: None,
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -823,6 +835,7 @@ mod tests {
             rev: Some("main".to_string()),
             root: None,
             rustdoc: None,
+            ..Default::default()
         };
         req.features = FeaturesConfig {
             all_features: true,
@@ -979,6 +992,7 @@ mod tests {
             rev: Some("main".to_string()),
             root: Some(PathBuf::from("/path/with spaces/baseline")),
             rustdoc: None,
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -996,6 +1010,7 @@ mod tests {
             rev: None,
             root: None,
             rustdoc: Some(PathBuf::from("/cache/crate-1.0.0-rustdoc.json")),
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -1195,6 +1210,7 @@ Major version bump required.
             rev: Some("main".to_string()),
             root: Some(PathBuf::from("/root")),
             rustdoc: Some(PathBuf::from("/doc")),
+            ..Default::default()
         };
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
@@ -1223,6 +1239,7 @@ Major version bump required.
             rev: Some("v1.0.0".to_string()),
             root: Some(PathBuf::from("/baseline")),
             rustdoc: None,
+            ..Default::default()
         };
         req.features = FeaturesConfig {
             all_features: false,
@@ -1279,5 +1296,255 @@ Major version bump required.
         let engine = CargoSemverChecksEngine;
         let debug_str = format!("{:?}", engine);
         assert!(debug_str.contains("CargoSemverChecksEngine"));
+    }
+
+    // =========================================================================
+    // Error path tests - subprocess failures
+    // =========================================================================
+
+    #[test]
+    fn test_check_cargo_not_found() {
+        // Test behavior when cargo binary doesn't exist
+        let engine = CargoSemverChecksEngine;
+        let mut req = minimal_request();
+        req.cargo_bin = Some(PathBuf::from("/nonexistent/path/to/cargo"));
+
+        let result = engine.check(req);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        // Should indicate it failed to run the command
+        assert!(
+            err_msg.contains("failed to run cargo semver-checks"),
+            "Error should mention failed to run: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_check_invalid_cargo_path() {
+        // Test with a path that exists but isn't executable (use a directory)
+        let engine = CargoSemverChecksEngine;
+        let mut req = minimal_request();
+        // Use temp dir as "cargo" - it exists but isn't executable
+        req.cargo_bin = Some(std::env::temp_dir());
+
+        let result = engine.check(req);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("failed to run cargo semver-checks"),
+            "Error should mention failed to run: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_check_nonexistent_manifest() {
+        // Test with a manifest path that doesn't exist
+        // Note: This may succeed in running cargo but cargo will fail
+        let engine = CargoSemverChecksEngine;
+        let mut req = minimal_request();
+        req.manifest_path = PathBuf::from("/definitely/does/not/exist/Cargo.toml");
+
+        let result = engine.check(req);
+
+        // This could either:
+        // 1. Fail if cargo isn't installed
+        // 2. Succeed but with non-zero exit code from cargo
+        match result {
+            Ok((_, output)) => {
+                // Cargo ran but should have failed
+                assert!(
+                    !output.success,
+                    "Cargo should fail with nonexistent manifest"
+                );
+            }
+            Err(e) => {
+                // Cargo failed to run (acceptable if cargo not installed in test env)
+                let err_msg = e.to_string();
+                assert!(
+                    err_msg.contains("failed to run") || err_msg.contains("cargo"),
+                    "Error should be about cargo execution: {}",
+                    err_msg
+                );
+            }
+        }
+    }
+
+    // =========================================================================
+    // Feature flag conflict/edge case tests
+    // =========================================================================
+
+    #[test]
+    fn test_build_command_all_features_with_explicit_features() {
+        // When both all_features and explicit features are set
+        // cargo-semver-checks allows this (all_features wins for actual features)
+        let mut req = minimal_request();
+        req.features = FeaturesConfig {
+            all_features: true,
+            default_features: false,
+            only_explicit_features: false,
+            features: vec!["serde".to_string(), "tokio".to_string()],
+            baseline_features: vec![],
+            current_features: vec![],
+        };
+
+        let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
+
+        // Both should be present - cargo-semver-checks handles the semantics
+        assert!(args.contains(&"--all-features".to_string()));
+        assert!(args.contains(&"--features".to_string()));
+        let feat_idx = args.iter().position(|a| a == "--features").unwrap();
+        assert_eq!(args[feat_idx + 1], "serde,tokio");
+    }
+
+    #[test]
+    fn test_build_command_default_features_false_with_all_features() {
+        // Edge case: both default_features=true and all_features=true
+        let mut req = minimal_request();
+        req.features = FeaturesConfig {
+            all_features: true,
+            default_features: true,
+            only_explicit_features: false,
+            features: vec![],
+            baseline_features: vec![],
+            current_features: vec![],
+        };
+
+        let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
+
+        // Both flags should be present
+        assert!(args.contains(&"--all-features".to_string()));
+        assert!(args.contains(&"--default-features".to_string()));
+    }
+
+    #[test]
+    fn test_build_command_only_explicit_with_default_features() {
+        // Edge case: only_explicit and default_features both true
+        let mut req = minimal_request();
+        req.features = FeaturesConfig {
+            all_features: false,
+            default_features: true,
+            only_explicit_features: true,
+            features: vec![],
+            baseline_features: vec![],
+            current_features: vec![],
+        };
+
+        let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
+
+        // Both flags should be present - cargo-semver-checks resolves conflict
+        assert!(args.contains(&"--default-features".to_string()));
+        assert!(args.contains(&"--only-explicit-features".to_string()));
+    }
+
+    #[test]
+    fn test_build_command_empty_feature_name_in_list() {
+        // Edge case: features list contains empty string
+        let mut req = minimal_request();
+        req.features = FeaturesConfig {
+            all_features: false,
+            default_features: false,
+            only_explicit_features: false,
+            features: vec!["foo".to_string(), "".to_string(), "bar".to_string()],
+            baseline_features: vec![],
+            current_features: vec![],
+        };
+
+        let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
+
+        // Empty string is preserved in comma-separated list (cargo will handle)
+        let feat_idx = args.iter().position(|a| a == "--features").unwrap();
+        assert_eq!(args[feat_idx + 1], "foo,,bar");
+    }
+
+    #[test]
+    fn test_build_command_feature_names_with_special_chars() {
+        // Feature names with unusual but valid characters
+        let mut req = minimal_request();
+        req.features = FeaturesConfig {
+            all_features: false,
+            default_features: false,
+            only_explicit_features: false,
+            features: vec![
+                "feature/name".to_string(),  // forward slash
+                "feature.name".to_string(),  // dot
+                "feature:name".to_string(),  // colon
+                "feature+name".to_string(),  // plus
+            ],
+            baseline_features: vec![],
+            current_features: vec![],
+        };
+
+        let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
+
+        let feat_idx = args.iter().position(|a| a == "--features").unwrap();
+        assert_eq!(
+            args[feat_idx + 1],
+            "feature/name,feature.name,feature:name,feature+name"
+        );
+    }
+
+    #[test]
+    fn test_build_command_all_three_feature_modes_enabled() {
+        // All feature boolean flags enabled simultaneously
+        let mut req = minimal_request();
+        req.features = FeaturesConfig {
+            all_features: true,
+            default_features: true,
+            only_explicit_features: true,
+            features: vec![],
+            baseline_features: vec![],
+            current_features: vec![],
+        };
+
+        let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
+
+        // All three flags should be present
+        assert!(args.contains(&"--all-features".to_string()));
+        assert!(args.contains(&"--default-features".to_string()));
+        assert!(args.contains(&"--only-explicit-features".to_string()));
+    }
+
+    #[test]
+    fn test_build_command_whitespace_in_feature_name() {
+        // Feature name with whitespace (unusual but we pass through)
+        let mut req = minimal_request();
+        req.features = FeaturesConfig {
+            all_features: false,
+            default_features: false,
+            only_explicit_features: false,
+            features: vec!["feature with spaces".to_string()],
+            baseline_features: vec![],
+            current_features: vec![],
+        };
+
+        let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
+
+        let feat_idx = args.iter().position(|a| a == "--features").unwrap();
+        assert_eq!(args[feat_idx + 1], "feature with spaces");
+    }
+
+    #[test]
+    fn test_build_command_unicode_in_feature_name() {
+        // Feature name with unicode characters
+        let mut req = minimal_request();
+        req.features = FeaturesConfig {
+            all_features: false,
+            default_features: false,
+            only_explicit_features: false,
+            features: vec!["功能".to_string(), "фича".to_string()],
+            baseline_features: vec![],
+            current_features: vec![],
+        };
+
+        let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
+
+        let feat_idx = args.iter().position(|a| a == "--features").unwrap();
+        assert_eq!(args[feat_idx + 1], "功能,фича");
     }
 }

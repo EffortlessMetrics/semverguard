@@ -1166,3 +1166,332 @@ fn scenario_receipt_exit_codes_and_required_fields() {
     assert!(json.get("verdict").is_some());
     assert!(json.get("findings").is_some());
 }
+
+// =============================================================================
+// Scenario 7: Stress Tests
+// =============================================================================
+
+/// Scenario: Many packages processed
+///
+/// Given a workspace with many packages (50+)
+/// When running workspace mode check
+/// Then all packages are processed correctly
+#[test]
+fn stress_test_many_packages() {
+    // Given: A workspace with 50 packages
+    let packages: Vec<WorkspacePackage> = (0..50)
+        .map(|i| {
+            make_package(
+                &format!("lib-{:03}", i),
+                "1.0.0",
+                &format!("/workspace/lib-{:03}", i),
+                true,
+                true,
+            )
+        })
+        .collect();
+
+    let metadata = make_workspace("/workspace", packages);
+
+    let workspace = MockWorkspaceProvider::with_result(Ok(metadata));
+    let engine = MockSemverEngine::success();
+    engine.set_default(Ok((vec![], success_output())));
+
+    // When: Running workspace mode check
+    let runner = SemverguardRunner::new(&workspace, None, &engine);
+    let result = runner
+        .run(Path::new("/workspace"), &default_workspace_config())
+        .unwrap();
+
+    // Then: All 50 packages are processed
+    assert_eq!(result.packages.len(), 50);
+    assert_eq!(result.summary.total, 50);
+    assert_eq!(result.summary.passed, 50);
+    assert_eq!(engine.call_count(), 50);
+
+    // Verify packages are correctly named
+    for i in 0..50 {
+        let name = format!("lib-{:03}", i);
+        let pkg = result.packages.iter().find(|p| p.name == name);
+        assert!(pkg.is_some(), "Package {} should exist", name);
+        assert_eq!(pkg.unwrap().status, PackageStatus::Passed);
+    }
+}
+
+/// Scenario: Many packages with mixed results
+///
+/// Given a large workspace with various outcomes
+/// When running check
+/// Then summary counts are accurate
+#[test]
+fn stress_test_many_packages_mixed_results() {
+    // Given: 30 packages with varying outcomes
+    let packages: Vec<WorkspacePackage> = (0..30)
+        .map(|i| {
+            // Every 3rd package is not publishable
+            let publishable = i % 3 != 0;
+            make_package(
+                &format!("pkg-{:02}", i),
+                "1.0.0",
+                &format!("/workspace/pkg-{:02}", i),
+                publishable,
+                true,
+            )
+        })
+        .collect();
+
+    let metadata = make_workspace("/workspace", packages);
+
+    let workspace = MockWorkspaceProvider::with_result(Ok(metadata));
+
+    // Create results: alternating pass/fail for publishable packages
+    let mut results = Vec::new();
+    for i in 0..30 {
+        if i % 3 != 0 {
+            // Publishable - will be checked
+            if i % 2 == 0 {
+                results.push(Ok((vec![], success_output())));
+            } else {
+                results.push(Ok((
+                    vec![],
+                    SemverCheckOutput {
+                        exit_code: Some(1),
+                        success: false,
+                        stdout: String::new(),
+                        stderr: "Breaking change".into(),
+                        required_bump: Some(semverguard_types::RequiredBump::Major),
+                    },
+                )));
+            }
+        }
+    }
+
+    let engine = MockSemverEngine::with_results(results);
+
+    // When: Running with skip_publish_false
+    let runner = SemverguardRunner::new(&workspace, None, &engine);
+    let mut config = default_workspace_config();
+    config.scope.skip_publish_false = true;
+
+    let result = runner.run(Path::new("/workspace"), &config).unwrap();
+
+    // Then: Counts should be accurate
+    // 10 packages are not publishable (i % 3 == 0) -> skipped
+    // 20 packages are publishable, half pass, half fail
+    assert_eq!(result.summary.total, 30);
+    assert_eq!(result.summary.skipped, 10);
+
+    // The engine was called for 20 packages
+    assert_eq!(engine.call_count(), 20);
+
+    // Verify total = passed + failed + skipped
+    assert_eq!(
+        result.summary.total,
+        result.summary.passed + result.summary.failed + result.summary.skipped
+    );
+}
+
+/// Scenario: Fail-fast stops correctly during large batch
+///
+/// Given many packages with an early failure
+/// When running with fail_fast
+/// Then processing stops at the failure
+#[test]
+fn stress_test_fail_fast_many_packages() {
+    // Given: 20 packages, 5th one fails
+    let packages: Vec<WorkspacePackage> = (0..20)
+        .map(|i| {
+            make_package(
+                &format!("pkg-{:02}", i),
+                "1.0.0",
+                &format!("/workspace/pkg-{:02}", i),
+                true,
+                true,
+            )
+        })
+        .collect();
+
+    let metadata = make_workspace("/workspace", packages);
+
+    let workspace = MockWorkspaceProvider::with_result(Ok(metadata));
+
+    // Create results: 4 pass, then fail, then more pass
+    let mut results = Vec::new();
+    for i in 0..20 {
+        if i == 4 {
+            results.push(Ok((
+                vec![],
+                SemverCheckOutput {
+                    exit_code: Some(1),
+                    success: false,
+                    stdout: String::new(),
+                    stderr: "Fatal breaking change".into(),
+                    required_bump: Some(semverguard_types::RequiredBump::Major),
+                },
+            )));
+        } else {
+            results.push(Ok((vec![], success_output())));
+        }
+    }
+
+    let engine = MockSemverEngine::with_results(results);
+
+    // When: Running with fail_fast
+    let runner = SemverguardRunner::new(&workspace, None, &engine);
+    let mut config = default_workspace_config();
+    config.engine.fail_fast = true;
+
+    let result = runner.run(Path::new("/workspace"), &config).unwrap();
+
+    // Then: Only 5 packages processed (4 pass + 1 fail)
+    assert_eq!(engine.call_count(), 5);
+    assert_eq!(result.packages.len(), 5);
+    assert_eq!(result.summary.passed, 4);
+    assert_eq!(result.summary.failed, 1);
+}
+
+/// Scenario: Changed mode with many packages and few changes
+///
+/// Given a large workspace with only a few changed packages
+/// When running in changed mode
+/// Then only changed packages are checked
+#[test]
+fn stress_test_changed_mode_few_changes_in_large_workspace() {
+    // Given: 100 packages
+    let packages: Vec<WorkspacePackage> = (0..100)
+        .map(|i| {
+            make_package(
+                &format!("lib-{:03}", i),
+                "1.0.0",
+                &format!("/workspace/lib-{:03}", i),
+                true,
+                true,
+            )
+        })
+        .collect();
+
+    let metadata = make_workspace("/workspace", packages);
+
+    // Only 3 packages have changes
+    let changed_paths = vec![
+        PathBuf::from("lib-007/src/lib.rs"),
+        PathBuf::from("lib-042/src/mod.rs"),
+        PathBuf::from("lib-099/Cargo.toml"),
+    ];
+
+    let workspace = MockWorkspaceProvider::with_result(Ok(metadata));
+    let git = MockGitProvider::with_changed_paths(changed_paths);
+    let engine = MockSemverEngine::success();
+    engine.set_default(Ok((vec![], success_output())));
+
+    // When: Running in changed mode
+    let runner = SemverguardRunner::new(&workspace, Some(&git), &engine);
+    let config = changed_mode_config("origin/main");
+    let result = runner.run(Path::new("/workspace"), &config).unwrap();
+
+    // Then: Only 3 packages are checked
+    assert_eq!(engine.call_count(), 3);
+    assert_eq!(result.summary.passed, 3);
+    assert_eq!(result.summary.skipped, 97);
+
+    // Verify correct packages were checked
+    let checked_names: Vec<&str> = result
+        .packages
+        .iter()
+        .filter(|p| p.status == PackageStatus::Passed)
+        .map(|p| p.name.as_str())
+        .collect();
+    assert!(checked_names.contains(&"lib-007"));
+    assert!(checked_names.contains(&"lib-042"));
+    assert!(checked_names.contains(&"lib-099"));
+}
+
+/// Scenario: Multiple include/exclude globs with many packages
+///
+/// Given a large workspace with complex filter patterns
+/// When running with multiple include/exclude globs
+/// Then filtering is correct and efficient
+#[test]
+fn stress_test_complex_glob_filtering() {
+    // Given: 50 packages with various naming patterns
+    let mut packages = Vec::new();
+    for i in 0..10 {
+        packages.push(make_package(
+            &format!("core-lib-{}", i),
+            "1.0.0",
+            &format!("/workspace/core-lib-{}", i),
+            true,
+            true,
+        ));
+        packages.push(make_package(
+            &format!("core-test-{}", i),
+            "0.1.0",
+            &format!("/workspace/core-test-{}", i),
+            true,
+            true,
+        ));
+        packages.push(make_package(
+            &format!("internal-{}", i),
+            "0.1.0",
+            &format!("/workspace/internal-{}", i),
+            true,
+            true,
+        ));
+        packages.push(make_package(
+            &format!("utils-{}", i),
+            "1.0.0",
+            &format!("/workspace/utils-{}", i),
+            true,
+            true,
+        ));
+        packages.push(make_package(
+            &format!("other-{}", i),
+            "1.0.0",
+            &format!("/workspace/other-{}", i),
+            true,
+            true,
+        ));
+    }
+
+    let metadata = make_workspace("/workspace", packages);
+
+    let workspace = MockWorkspaceProvider::with_result(Ok(metadata));
+    let engine = MockSemverEngine::success();
+    engine.set_default(Ok((vec![], success_output())));
+
+    // When: Including core-* and utils-*, excluding *-test and internal-*
+    let runner = SemverguardRunner::new(&workspace, None, &engine);
+    let mut config = default_workspace_config();
+    config.scope.include = vec!["core-*".to_string(), "utils-*".to_string()];
+    config.scope.exclude = vec!["*-test*".to_string(), "internal-*".to_string()];
+
+    let result = runner.run(Path::new("/workspace"), &config).unwrap();
+
+    // Then: Only core-lib-* and utils-* packages should be checked (20 total)
+    // core-lib-* (10) + utils-* (10) = 20
+    // core-test-* would match include but also matches exclude -> skipped
+    assert_eq!(engine.call_count(), 20);
+    assert_eq!(result.summary.passed, 20);
+    assert_eq!(result.summary.skipped, 30);
+
+    // Verify core-lib packages were checked
+    for i in 0..10 {
+        let name = format!("core-lib-{}", i);
+        let pkg = result.packages.iter().find(|p| p.name == name).unwrap();
+        assert_eq!(pkg.status, PackageStatus::Passed);
+    }
+
+    // Verify utils packages were checked
+    for i in 0..10 {
+        let name = format!("utils-{}", i);
+        let pkg = result.packages.iter().find(|p| p.name == name).unwrap();
+        assert_eq!(pkg.status, PackageStatus::Passed);
+    }
+
+    // Verify core-test packages were skipped (excluded)
+    for i in 0..10 {
+        let name = format!("core-test-{}", i);
+        let pkg = result.packages.iter().find(|p| p.name == name).unwrap();
+        assert_eq!(pkg.status, PackageStatus::Skipped);
+    }
+}

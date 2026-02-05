@@ -612,3 +612,78 @@ fn changed_paths_works_with_commit_sha() {
 
     assert!(result.contains(&PathBuf::from("new.txt")));
 }
+
+// ===========================================================================
+// Git binary error tests
+// ===========================================================================
+
+#[test]
+fn test_git_binary_not_found() {
+    // Test behavior when git binary doesn't exist
+    let cli = GitCli::new(Some(PathBuf::from("/nonexistent/path/to/git")));
+    let repo = create_temp_repo();
+
+    let result = cli.changed_paths(repo.path(), "HEAD", "HEAD");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let err_msg = err.to_string();
+    // Should indicate it failed to run git
+    assert!(
+        err_msg.contains("failed to run git"),
+        "Error should mention failed to run git: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_git_invalid_binary_path() {
+    // Test with a path that exists but isn't executable (use a directory)
+    let cli = GitCli::new(Some(std::env::temp_dir()));
+    let repo = create_temp_repo();
+
+    let result = cli.changed_paths(repo.path(), "HEAD", "HEAD");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let err_msg = err.to_string();
+    // Should indicate it failed to run git
+    assert!(
+        err_msg.contains("failed to run git"),
+        "Error should mention failed to run git: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_git_binary_with_empty_path() {
+    // Test with empty string as git path - should fail to execute
+    let cli = GitCli::new(Some(PathBuf::from("")));
+    let repo = create_temp_repo();
+
+    let result = cli.changed_paths(repo.path(), "HEAD", "HEAD");
+
+    // Empty path should fail
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_git_error_message_contains_context() {
+    // Verify that git errors contain actionable context
+    let cli = GitCli::default();
+    let repo = create_temp_repo();
+
+    // Use an invalid ref to trigger a git error
+    let result = cli.changed_paths(repo.path(), "definitely-not-a-valid-ref", "HEAD");
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    let err_msg = err.to_string();
+
+    // Error should contain useful information for debugging
+    assert!(
+        err_msg.contains("git") || err_msg.contains("command"),
+        "Error should mention git or command: {}",
+        err_msg
+    );
+}

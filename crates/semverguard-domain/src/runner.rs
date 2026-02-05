@@ -2270,4 +2270,183 @@ mod tests {
         assert_eq!(result.summary.passed, 2);
         assert_eq!(engine.call_count(), 2);
     }
+
+    // =========================================================================
+    // Engine error propagation tests (without fail-fast)
+    // =========================================================================
+
+    #[test]
+    fn test_engine_error_without_fail_fast_continues_to_next_package() {
+        // When fail_fast is false, engine errors should not stop processing
+        let packages = vec![
+            make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true),
+            make_package("pkg-b", "2.0.0", "/workspace/pkg-b", true, true),
+            make_package("pkg-c", "0.1.0", "/workspace/pkg-c", true, true),
+        ];
+        let metadata = make_workspace_metadata(packages);
+        let workspace = MockWorkspaceProvider::new(metadata);
+        let engine = MockSemverEngine::new(vec![
+            MockSemverEngine::success_result(),
+            MockSemverEngine::engine_error(), // Second package has engine error
+            MockSemverEngine::success_result(), // Third should still run
+        ]);
+
+        let runner = SemverguardRunner::new(&workspace, None, &engine);
+        let mut config = default_config();
+        config.engine.fail_fast = false;
+
+        let result = runner.run(Path::new("/workspace"), &config).unwrap();
+
+        // All packages should be processed
+        assert_eq!(result.packages.len(), 3);
+        assert_eq!(result.summary.passed, 2);
+        assert_eq!(result.summary.failed, 1);
+        assert_eq!(engine.call_count(), 3);
+
+        // Verify the failed package has actionable error message
+        let failed = result
+            .packages
+            .iter()
+            .find(|p| p.name == "pkg-b")
+            .unwrap();
+        assert_eq!(failed.status, PackageStatus::Failed);
+        assert!(failed.skip_reason.is_some());
+        let reason = failed.skip_reason.as_ref().unwrap();
+        assert!(
+            reason.contains("engine") || reason.contains("cargo-semver-checks"),
+            "Error reason should mention engine or cargo-semver-checks: {}",
+            reason
+        );
+    }
+
+    #[test]
+    fn test_partial_failure_summary_counts_are_correct() {
+        // Test that summary counts are correct after mixed results
+        let packages = vec![
+            make_package("pkg-pass-1", "1.0.0", "/workspace/pkg-pass-1", true, true),
+            make_package("pkg-fail-1", "1.0.0", "/workspace/pkg-fail-1", true, true),
+            make_package("pkg-error-1", "1.0.0", "/workspace/pkg-error-1", true, true),
+            make_package("pkg-pass-2", "1.0.0", "/workspace/pkg-pass-2", true, true),
+            make_package("pkg-skip", "1.0.0", "/workspace/pkg-skip", false, true), // Will be skipped
+        ];
+        let metadata = make_workspace_metadata(packages);
+        let workspace = MockWorkspaceProvider::new(metadata);
+        let engine = MockSemverEngine::new(vec![
+            MockSemverEngine::success_result(),
+            MockSemverEngine::failure_result(),
+            MockSemverEngine::engine_error(),
+            MockSemverEngine::success_result(),
+        ]);
+
+        let runner = SemverguardRunner::new(&workspace, None, &engine);
+        let mut config = default_config();
+        config.engine.fail_fast = false;
+        config.scope.skip_publish_false = true;
+
+        let result = runner.run(Path::new("/workspace"), &config).unwrap();
+
+        assert_eq!(result.summary.total, 5);
+        assert_eq!(result.summary.passed, 2);
+        assert_eq!(result.summary.failed, 2); // 1 failure + 1 engine error
+        assert_eq!(result.summary.skipped, 1);
+        assert_eq!(
+            result.summary.total,
+            result.summary.passed + result.summary.failed + result.summary.skipped
+        );
+    }
+
+    #[test]
+    fn test_error_messages_are_actionable() {
+        // Verify error messages provide context for debugging
+        let packages = vec![make_package(
+            "my-crate",
+            "1.0.0",
+            "/workspace/my-crate",
+            true,
+            true,
+        )];
+        let metadata = make_workspace_metadata(packages);
+        let workspace = MockWorkspaceProvider::new(metadata);
+        let engine = MockSemverEngine::new(vec![MockSemverEngine::engine_error()]);
+
+        let runner = SemverguardRunner::new(&workspace, None, &engine);
+        let config = default_config();
+        let result = runner.run(Path::new("/workspace"), &config).unwrap();
+
+        let failed = &result.packages[0];
+        assert_eq!(failed.status, PackageStatus::Failed);
+
+        // Error should not be a raw stack trace but an actionable message
+        let reason = failed.skip_reason.as_ref().unwrap();
+        assert!(
+            !reason.contains("at src/") && !reason.contains("panicked"),
+            "Error should be user-friendly, not a stack trace: {}",
+            reason
+        );
+        // Should contain some indication of what went wrong
+        assert!(
+            reason.len() > 10,
+            "Error message should be descriptive: {}",
+            reason
+        );
+    }
+
+    #[test]
+    fn test_multiple_engine_errors_all_reported() {
+        // When multiple packages have engine errors, all should be reported
+        let packages = vec![
+            make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true),
+            make_package("pkg-b", "1.0.0", "/workspace/pkg-b", true, true),
+            make_package("pkg-c", "1.0.0", "/workspace/pkg-c", true, true),
+        ];
+        let metadata = make_workspace_metadata(packages);
+        let workspace = MockWorkspaceProvider::new(metadata);
+        let engine = MockSemverEngine::new(vec![
+            MockSemverEngine::engine_error(),
+            MockSemverEngine::engine_error(),
+            MockSemverEngine::engine_error(),
+        ]);
+
+        let runner = SemverguardRunner::new(&workspace, None, &engine);
+        let mut config = default_config();
+        config.engine.fail_fast = false;
+
+        let result = runner.run(Path::new("/workspace"), &config).unwrap();
+
+        assert_eq!(result.summary.failed, 3);
+        assert_eq!(engine.call_count(), 3);
+
+        // Each package should have its own failure recorded
+        for pkg in &result.packages {
+            assert_eq!(pkg.status, PackageStatus::Failed);
+            assert!(pkg.skip_reason.is_some());
+        }
+    }
+
+    #[test]
+    fn test_engine_error_preserves_package_metadata() {
+        // Even on error, package metadata should be preserved in report
+        let packages = vec![make_package(
+            "my-crate",
+            "2.3.4",
+            "/workspace/my-crate",
+            true,
+            true,
+        )];
+        let metadata = make_workspace_metadata(packages);
+        let workspace = MockWorkspaceProvider::new(metadata);
+        let engine = MockSemverEngine::new(vec![MockSemverEngine::engine_error()]);
+
+        let runner = SemverguardRunner::new(&workspace, None, &engine);
+        let config = default_config();
+        let result = runner.run(Path::new("/workspace"), &config).unwrap();
+
+        let report = &result.packages[0];
+        assert_eq!(report.name, "my-crate");
+        assert_eq!(report.version, "2.3.4");
+        assert_eq!(
+            report.manifest_path,
+            PathBuf::from("/workspace/my-crate/Cargo.toml")
+        );
+    }
 }
