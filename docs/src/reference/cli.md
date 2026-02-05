@@ -90,6 +90,7 @@ semverguard check --dry-run
 - When `--json` is specified without `--format`, the format defaults to `both` (text + JSON)
 - `--sarif` is shorthand for `--format sarif --json <path>` (SARIF format for GitHub Code Scanning)
 - `--format receipt` emits `artifacts/semverguard/report.json`, `comment.md`, and raw logs (optional SARIF)
+- Receipt artifact paths are workspace-root-relative when possible (forward slashes)
 - When using `--format receipt`, `--sarif` writes `artifacts/semverguard/sarif.json` (path is ignored)
 - `--baseline-rev` and `--baseline-version` are mutually exclusive (last one wins)
 - `--changed` requires `--baseline-rev` (git baseline)

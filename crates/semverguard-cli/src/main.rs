@@ -20,7 +20,7 @@ mod receipt;
 use progress::{create_progress_reporter, ProgressCallbackAdapter, ProgressChoice};
 use receipt::{
     build_artifact_index, build_receipt, exit_code_from_receipt, has_tool_error,
-    write_receipt_bundle, ToolErrorFinding,
+    resolve_artifacts_dir, write_receipt_bundle, ToolErrorFinding,
 };
 
 #[derive(Parser, Debug)]
@@ -337,13 +337,28 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
 
     let receipt_requested = matches!(config.output.format, OutputFormat::Receipt);
     let sarif_requested = receipt_requested && args.sarif.is_some();
+    let artifacts_root = resolve_artifacts_dir(&args.workspace_root, &config.output.artifacts_dir);
 
     if let Err(e) = cfg_result {
-        return handle_tool_error(e, &config, receipt_requested, sarif_requested);
+        return handle_tool_error(
+            e,
+            &config,
+            &args.workspace_root,
+            &artifacts_root,
+            receipt_requested,
+            sarif_requested,
+        );
     }
 
     if let Err(e) = ensure_workspace_root(&args.workspace_root) {
-        return handle_tool_error(e, &config, receipt_requested, sarif_requested);
+        return handle_tool_error(
+            e,
+            &config,
+            &args.workspace_root,
+            &artifacts_root,
+            receipt_requested,
+            sarif_requested,
+        );
     }
 
     // Wire adapters.
@@ -369,7 +384,14 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
     let artifacts = match runner.run(&args.workspace_root, &config) {
         Ok(artifacts) => artifacts,
         Err(e) => {
-            return handle_tool_error(anyhow::Error::new(e), &config, receipt_requested, sarif_requested);
+            return handle_tool_error(
+                anyhow::Error::new(e),
+                &config,
+                &args.workspace_root,
+                &artifacts_root,
+                receipt_requested,
+                sarif_requested,
+            );
         }
     };
     let finished = OffsetDateTime::now_utc();
@@ -388,11 +410,21 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
     };
 
     if receipt_requested {
-        let artifact_index =
-            build_artifact_index(&config.output.artifacts_dir, Some(&report), sarif_requested);
-        let receipt = build_receipt(Some(&report), &[], &artifact_index, &config.baseline);
+        let artifact_index = build_artifact_index(
+            &args.workspace_root,
+            &artifacts_root,
+            Some(&report),
+            sarif_requested,
+        );
+        let receipt = build_receipt(
+            Some(&report),
+            &[],
+            &artifact_index,
+            &config.baseline,
+            &args.workspace_root,
+        );
         write_receipt_bundle(
-            &config.output.artifacts_dir,
+            &artifacts_root,
             &receipt,
             Some(&report),
             sarif_requested,
@@ -413,6 +445,8 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
 fn handle_tool_error(
     err: anyhow::Error,
     config: &SemverguardConfig,
+    workspace_root: &Path,
+    artifacts_root: &Path,
     receipt_requested: bool,
     sarif_requested: bool,
 ) -> Result<i32> {
@@ -422,10 +456,16 @@ fn handle_tool_error(
 
     eprintln!("error: {err:?}");
     let errors = vec![ToolErrorFinding::new(err.to_string())];
-    let artifact_index = build_artifact_index(&config.output.artifacts_dir, None, sarif_requested);
-    let receipt = build_receipt(None, &errors, &artifact_index, &config.baseline);
+    let artifact_index = build_artifact_index(workspace_root, artifacts_root, None, sarif_requested);
+    let receipt = build_receipt(
+        None,
+        &errors,
+        &artifact_index,
+        &config.baseline,
+        workspace_root,
+    );
     write_receipt_bundle(
-        &config.output.artifacts_dir,
+        artifacts_root,
         &receipt,
         None,
         sarif_requested,

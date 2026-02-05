@@ -149,7 +149,7 @@ Responsibilities:
 2. Load and merge configuration
 3. Instantiate adapters
 4. Create `SemverguardRunner` with adapters
-5. Execute run and format output (text, JSON, or SARIF)
+5. Execute run and format output (text, JSON, SARIF, or receipt)
 6. Display progress (spinner/progress bar) when running interactively
 7. Return appropriate exit code
 
@@ -220,7 +220,7 @@ Each crate has a single responsibility:
 4. Runner returns RunArtifacts
          │
          ▼
-5. CLI wraps in RunReport, emits output, returns exit code
+5. CLI wraps in RunReport, emits output (text/JSON/SARIF/receipt), returns exit code
 ```
 
 ## Error Handling

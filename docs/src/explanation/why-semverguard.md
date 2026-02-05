@@ -89,9 +89,10 @@ json_path = "report.json"
 **Problem**: Distinguishing "check failed" from "config error" in CI scripts.
 
 **Solution**: Semantic exit codes:
-- `0` = All checks passed
-- `1` = SemVer violations (fail the build)
-- `2` = Configuration error (fix the setup)
+- `0` = Pass (or warn when warn-as-fail is disabled)
+- `1` = Tool/runtime error (fix the setup)
+- `2` = SemVer policy failure (fail the build)
+- `3` = Warn-as-fail
 
 ## When to Use Which Tool
 

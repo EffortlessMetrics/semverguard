@@ -100,11 +100,12 @@ semverguard uses exit codes to integrate with CI systems:
 
 | Exit Code | Meaning |
 |-----------|---------|
-| 0 | All checks passed |
-| 1 | SemVer failures detected |
-| 2 | Configuration or invocation error |
+| 0 | Pass (or warn when warn-as-fail is disabled) |
+| 1 | Tool/runtime error |
+| 2 | SemVer policy failure |
+| 3 | Warn-as-fail |
 
-Exit code 1 fails the CI job when breaking changes are detected, providing automatic gatekeeping.
+Exit code 2 fails the CI job when breaking changes are detected, providing automatic gatekeeping.
 
 ## Caching
 

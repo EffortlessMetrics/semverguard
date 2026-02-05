@@ -8,9 +8,9 @@ semverguard is a Rust orchestration layer around [cargo-semver-checks](https://g
 
 - **Scoped checks**: Run checks only on changed crates (relative to a git baseline) or the entire workspace
 - **Centralized configuration**: Configure all options in `semverguard.toml`
-- **Machine-readable output**: Generate JSON or SARIF reports for CI artifact tracking
+- **Machine-readable output**: Generate JSON, SARIF, or receipt bundles for CI artifact tracking
 - **GitHub Code Scanning**: SARIF output integrates with GitHub's security dashboard
-- **CI-friendly exit codes**: Exit 1 for SemVer failures (CI gating), exit 2 for configuration errors
+- **CI-friendly exit codes**: Exit 2 for SemVer failures, exit 1 for tool/runtime errors
 - **Preview mode**: List which packages would be checked before running
 
 ## Quick Start

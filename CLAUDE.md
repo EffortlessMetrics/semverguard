@@ -10,7 +10,7 @@ Key features:
 - Scopes checks to only changed crates (relative to git baseline) or entire workspace
 - Centralizes configuration in `semverguard.toml`
 - Outputs machine-readable JSON reports for CI artifact tracking
-- Exit code 1 for SemVer failures (CI gating), exit code 2 for config errors
+- Exit code 2 for SemVer failures (CI gating), exit code 1 for tool/runtime errors
 
 ## Build Commands
 

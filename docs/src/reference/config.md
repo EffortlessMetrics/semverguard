@@ -248,7 +248,8 @@ pretty_json = false  # Compact
 
 #### `artifacts_dir`
 
-Directory for receipt artifacts (when `format = "receipt"`):
+Directory for receipt artifacts (when `format = "receipt"`). Relative paths are resolved
+against the workspace root:
 
 ```toml
 [output]

@@ -4,7 +4,7 @@
 
 - run checks across a workspace (optionally only for changed crates)
 - keep the flags/config in one place (`semverguard.toml`)
-- emit a machine-readable JSON report for CI artifacts
+- emit machine-readable JSON, SARIF, or receipt bundles for CI artifacts
 - exit non‑zero when a crate fails SemVer policy (so CI can gate PRs)
 
 This repository is a Rust workspace with multiple crates:
@@ -88,17 +88,20 @@ extra_args = []
 fail_fast = false
 
 [output]
-# format = "text" | "json" | "both"
+# format = "text" | "json" | "both" | "sarif" | "receipt"
 format = "both"
 json_path = "semverguard-report.json"
 pretty_json = true
+artifacts_dir = "artifacts/semverguard"
+warn_as_fail = false
 ```
 
 ## Exit codes
 
-- `0` — all checked crates passed (or were skipped by policy)
-- `1` — at least one crate failed SemVer policy
-- `2` — configuration / invocation error
+- `0` — pass (or warn when warn-as-fail is disabled)
+- `1` — tool/runtime error
+- `2` — semver policy failure
+- `3` — warn-as-fail
 
 ## CI integration
 

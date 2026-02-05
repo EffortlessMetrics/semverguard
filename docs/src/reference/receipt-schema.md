@@ -4,7 +4,8 @@ Reference for the cockpit receipt format emitted by `semverguard` when `--format
 
 ## Overview
 
-Receipt output produces a canonical artifact bundle:
+Receipt output produces a canonical artifact bundle (paths are workspace-root-relative with
+forward slashes when possible):
 
 ```
 artifacts/semverguard/report.json
@@ -82,14 +83,14 @@ Each finding uses a stable identity:
   "level": "error",
   "message": "Package `my-lib` (v1.0.0) requires a major version bump",
   "location": {
-    "path": "/path/to/my-lib/Cargo.toml",
+    "path": "crates/my-lib/Cargo.toml",
     "raw_log": "artifacts/semverguard/raw/my-lib-1.0.0.stderr.log"
   },
   "data": {
     "package": "my-lib",
     "version": "1.0.0",
     "required_bump": "major",
-    "failure_kind": "SemverViolation"
+    "failure_kind": "semver-violation"
   }
 }
 ```

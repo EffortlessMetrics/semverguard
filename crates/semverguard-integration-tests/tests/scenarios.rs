@@ -1102,12 +1102,13 @@ fn scenario_multiple_changed_packages() {
 fn scenario_tool_error_emits_receipt_bundle() {
     let temp_dir = TempDir::new().expect("failed to create temp dir");
 
-    let artifacts = build_artifact_index(temp_dir.path(), None, false);
+    let artifacts = build_artifact_index(temp_dir.path(), temp_dir.path(), None, false);
     let receipt = build_receipt(
         None,
         &[ToolErrorFinding::new("simulated tool failure")],
         &artifacts,
         &BaselineConfig::default(),
+        temp_dir.path(),
     );
 
     write_receipt_bundle(temp_dir.path(), &receipt, None, false, true)
@@ -1146,8 +1147,14 @@ fn scenario_receipt_exit_codes_and_required_fields() {
         },
     };
 
-    let artifacts = build_artifact_index(temp_dir.path(), Some(&report), false);
-    let receipt = build_receipt(Some(&report), &[], &artifacts, &BaselineConfig::default());
+    let artifacts = build_artifact_index(temp_dir.path(), temp_dir.path(), Some(&report), false);
+    let receipt = build_receipt(
+        Some(&report),
+        &[],
+        &artifacts,
+        &BaselineConfig::default(),
+        temp_dir.path(),
+    );
     let code = exit_code_from_receipt(
         &receipt.verdict,
         false,

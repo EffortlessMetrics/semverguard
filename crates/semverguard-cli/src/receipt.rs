@@ -27,8 +27,18 @@ impl ToolErrorFinding {
     }
 }
 
+/// Resolve the artifacts directory against the workspace root.
+pub fn resolve_artifacts_dir(workspace_root: &Path, artifacts_dir: &Path) -> PathBuf {
+    if artifacts_dir.is_absolute() {
+        artifacts_dir.to_path_buf()
+    } else {
+        workspace_root.join(artifacts_dir)
+    }
+}
+
 /// Build the artifact index for a receipt.
 pub fn build_artifact_index(
+    workspace_root: &Path,
     artifacts_dir: &Path,
     report: Option<&RunReport>,
     sarif_requested: bool,
@@ -42,14 +52,14 @@ pub fn build_artifact_index(
     };
 
     let raw_logs = match report {
-        Some(report) => build_raw_log_refs(report, artifacts_dir),
+        Some(report) => build_raw_log_refs(report, workspace_root, artifacts_dir),
         None => Vec::new(),
     };
 
     ArtifactIndex {
-        report_json: report_json.display().to_string(),
-        comment_md: comment_md.display().to_string(),
-        sarif_json: sarif_json.map(|p| p.display().to_string()),
+        report_json: normalize_receipt_path(workspace_root, &report_json),
+        comment_md: normalize_receipt_path(workspace_root, &comment_md),
+        sarif_json: sarif_json.map(|p| normalize_receipt_path(workspace_root, &p)),
         raw_logs,
     }
 }
@@ -60,10 +70,11 @@ pub fn build_receipt(
     errors: &[ToolErrorFinding],
     artifacts: &ArtifactIndex,
     baseline: &BaselineConfig,
+    workspace_root: &Path,
 ) -> SensorReportV1 {
     let (run_info, findings_from_report) = match report {
         Some(report) => (build_run_info(report, baseline), build_findings(report, artifacts)),
-        None => (build_run_info_from_now(baseline), Vec::new()),
+        None => (build_run_info_from_now(baseline, workspace_root), Vec::new()),
     };
 
     let mut findings = findings_from_report;
@@ -188,7 +199,10 @@ fn build_run_info(report: &RunReport, baseline: &BaselineConfig) -> semverguard_
     }
 }
 
-fn build_run_info_from_now(baseline: &BaselineConfig) -> semverguard_types::RunInfo {
+fn build_run_info_from_now(
+    baseline: &BaselineConfig,
+    workspace_root: &Path,
+) -> semverguard_types::RunInfo {
     let now = OffsetDateTime::now_utc();
     let ts = now
         .format(&Rfc3339)
@@ -197,7 +211,7 @@ fn build_run_info_from_now(baseline: &BaselineConfig) -> semverguard_types::RunI
         started_at: ts.clone(),
         finished_at: ts,
         duration_ms: 0,
-        workspace_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        workspace_root: workspace_root.to_path_buf(),
         baseline: baseline.clone(),
     }
 }
@@ -241,7 +255,7 @@ fn build_findings(report: &RunReport, artifacts: &ArtifactIndex) -> Vec<Finding>
             .and_then(|(stdout, stderr)| stderr.clone().or_else(|| stdout.clone()));
 
         let location = Some(FindingLocation {
-            path: Some(pkg.manifest_path.display().to_string()),
+            path: Some(normalize_receipt_path(&report.workspace_root, &pkg.manifest_path)),
             line: None,
             column: None,
             raw_log,
@@ -354,7 +368,11 @@ fn derive_verdict(
     (VerdictStatus::Pass, None)
 }
 
-fn build_raw_log_refs(report: &RunReport, artifacts_dir: &Path) -> Vec<RawLogRef> {
+fn build_raw_log_refs(
+    report: &RunReport,
+    workspace_root: &Path,
+    artifacts_dir: &Path,
+) -> Vec<RawLogRef> {
     let mut packages = report.packages.iter().collect::<Vec<_>>();
     packages.sort_by(|a, b| (a.name.as_str(), a.version.as_str()).cmp(&(b.name.as_str(), b.version.as_str())));
 
@@ -367,8 +385,8 @@ fn build_raw_log_refs(report: &RunReport, artifacts_dir: &Path) -> Vec<RawLogRef
         raw_logs.push(RawLogRef {
             package: pkg.name.clone(),
             version: pkg.version.clone(),
-            stdout: Some(stdout_path.display().to_string()),
-            stderr: Some(stderr_path.display().to_string()),
+            stdout: Some(normalize_receipt_path(workspace_root, &stdout_path)),
+            stderr: Some(normalize_receipt_path(workspace_root, &stderr_path)),
         });
     }
 
@@ -425,6 +443,20 @@ fn raw_log_paths(artifacts_dir: &Path, pkg: &PackageReport) -> (PathBuf, PathBuf
         raw_dir.join(format!("{base}.stdout.log")),
         raw_dir.join(format!("{base}.stderr.log")),
     )
+}
+
+fn normalize_receipt_path(workspace_root: &Path, path: &Path) -> String {
+    let full_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        workspace_root.join(path)
+    };
+
+    let normalized = full_path
+        .strip_prefix(workspace_root)
+        .unwrap_or(full_path.as_path());
+
+    normalized.to_string_lossy().replace('\\', "/")
 }
 
 fn sanitize_filename_component(input: &str) -> String {
@@ -504,7 +536,12 @@ mod tests {
     #[test]
     fn test_build_artifact_index_raw_logs_sorted() {
         let report = sample_report();
-        let artifacts = build_artifact_index(Path::new("artifacts/semverguard"), Some(&report), false);
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            Path::new("artifacts/semverguard"),
+            Some(&report),
+            false,
+        );
 
         assert_eq!(artifacts.raw_logs.len(), 1);
         let raw = &artifacts.raw_logs[0];
@@ -524,8 +561,19 @@ mod tests {
     #[test]
     fn test_build_receipt_findings_ordering() {
         let report = sample_report();
-        let artifacts = build_artifact_index(Path::new("artifacts/semverguard"), Some(&report), false);
-        let receipt = build_receipt(Some(&report), &[], &artifacts, &BaselineConfig::default());
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            Path::new("artifacts/semverguard"),
+            Some(&report),
+            false,
+        );
+        let receipt = build_receipt(
+            Some(&report),
+            &[],
+            &artifacts,
+            &BaselineConfig::default(),
+            report.workspace_root.as_path(),
+        );
 
         assert!(!receipt.findings.is_empty());
         for window in receipt.findings.windows(2) {
@@ -541,8 +589,19 @@ mod tests {
     #[test]
     fn test_comment_includes_sections() {
         let report = sample_report();
-        let artifacts = build_artifact_index(Path::new("artifacts/semverguard"), Some(&report), false);
-        let receipt = build_receipt(Some(&report), &[], &artifacts, &BaselineConfig::default());
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            Path::new("artifacts/semverguard"),
+            Some(&report),
+            false,
+        );
+        let receipt = build_receipt(
+            Some(&report),
+            &[],
+            &artifacts,
+            &BaselineConfig::default(),
+            report.workspace_root.as_path(),
+        );
 
         let comment = comment::render_comment(&receipt);
         assert!(comment.contains("### Failed packages"));

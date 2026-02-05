@@ -460,7 +460,7 @@ pub fn receipt_to_sarif(receipt: &SensorReportV1) -> SarifLog {
         start_time_utc: Some(receipt.run.started_at.clone()),
         end_time_utc: Some(receipt.run.finished_at.clone()),
         working_directory: Some(SarifArtifactLocation {
-            uri: path_to_uri(&receipt.run.workspace_root),
+            uri: normalize_uri_str(&receipt.run.workspace_root.to_string_lossy()),
             uri_base_id: None,
         }),
     };
@@ -509,20 +509,19 @@ fn finding_to_sarif_result(finding: &Finding) -> SarifResult {
     };
 
     let locations = if let Some(loc) = &finding.location {
-        let path = loc
-            .raw_log
-            .as_ref()
-            .or(loc.path.as_ref())
-            .map(|p| SarifLocation {
+        let uri = loc.raw_log.as_ref().or(loc.path.as_ref());
+        match uri {
+            Some(path) => vec![SarifLocation {
                 physical_location: SarifPhysicalLocation {
                     artifact_location: SarifArtifactLocation {
-                        uri: path_to_uri(Path::new(p)),
+                        uri: normalize_uri_str(path),
                         uri_base_id: None,
                     },
                     region: None,
                 },
-            });
-        path.into_iter().collect()
+            }],
+            None => Vec::new(),
+        }
     } else {
         Vec::new()
     };
@@ -558,6 +557,10 @@ fn path_to_uri(path: &Path) -> String {
     } else {
         format!("file:///{}", path_str)
     }
+}
+
+fn normalize_uri_str(s: &str) -> String {
+    s.replace('\\', "/")
 }
 
 /// Serialize a SARIF log to JSON.
