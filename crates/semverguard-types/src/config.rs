@@ -7,6 +7,7 @@ use std::path::PathBuf;
 /// - `Pr` mode: For pull request lanes, tolerant of baseline errors
 /// - `Release` mode: For release/tag lanes, strict enforcement
 /// - `Auto` mode: Detect from CI environment variables
+/// - `Cockpit` mode: For cockpitctl integration, always write receipt, exit 0 on success
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunMode {
@@ -34,6 +35,14 @@ pub enum RunMode {
     /// - Good default for `--workspace` scope
     /// - Designed for release/tag lanes
     Release,
+    /// Cockpit mode: always write receipt, exit 0 if written successfully.
+    ///
+    /// Behavior:
+    /// - Forces `--format receipt` output
+    /// - Exit 0 if receipt is written successfully (even with semver violations)
+    /// - Exit 1 only if receipt write fails
+    /// - Allows `cockpitctl` to be the sole gatekeeper
+    Cockpit,
 }
 
 impl RunMode {
@@ -82,6 +91,8 @@ impl RunMode {
     }
 
     /// Resolve Auto mode to a concrete mode using environment detection.
+    ///
+    /// Note: Cockpit mode does not resolve to another mode; it stays as Cockpit.
     pub fn resolve(self) -> RunMode {
         match self {
             RunMode::Auto => RunMode::detect_from_env(),
@@ -89,18 +100,23 @@ impl RunMode {
         }
     }
 
+    /// Returns true if this is cockpit mode.
+    pub fn is_cockpit(&self) -> bool {
+        matches!(self, RunMode::Cockpit)
+    }
+
     /// Returns true if baseline errors should be treated as warnings.
     ///
-    /// In Pr mode, baseline errors are warnings (don't fail CI).
+    /// In Pr and Cockpit modes, baseline errors are warnings (don't fail CI).
     /// In Release mode, baseline errors are failures.
     pub fn baseline_errors_are_warnings(&self) -> bool {
-        matches!(self.resolve(), RunMode::Pr)
+        matches!(self.resolve(), RunMode::Pr | RunMode::Cockpit)
     }
 
     /// Returns the suggested default scope mode for this run mode.
     pub fn suggested_scope_mode(&self) -> ScopeMode {
         match self.resolve() {
-            RunMode::Pr | RunMode::Auto => ScopeMode::Changed,
+            RunMode::Pr | RunMode::Auto | RunMode::Cockpit => ScopeMode::Changed,
             RunMode::Release => ScopeMode::Workspace,
         }
     }
@@ -580,7 +596,7 @@ mod tests {
 
     #[test]
     fn test_run_mode_json_roundtrip() {
-        for mode in [RunMode::Auto, RunMode::Pr, RunMode::Release] {
+        for mode in [RunMode::Auto, RunMode::Pr, RunMode::Release, RunMode::Cockpit] {
             let json = serde_json::to_string(&mode).unwrap();
             let deserialized: RunMode = serde_json::from_str(&json).unwrap();
             assert_eq!(mode, deserialized);
@@ -595,12 +611,17 @@ mod tests {
             serde_json::to_string(&RunMode::Release).unwrap(),
             "\"release\""
         );
+        assert_eq!(
+            serde_json::to_string(&RunMode::Cockpit).unwrap(),
+            "\"cockpit\""
+        );
     }
 
     #[test]
     fn test_run_mode_baseline_errors_are_warnings() {
         assert!(RunMode::Pr.baseline_errors_are_warnings());
         assert!(!RunMode::Release.baseline_errors_are_warnings());
+        assert!(RunMode::Cockpit.baseline_errors_are_warnings());
     }
 
     #[test]
@@ -613,6 +634,10 @@ mod tests {
             RunMode::Release.suggested_scope_mode(),
             ScopeMode::Workspace
         ));
+        assert!(matches!(
+            RunMode::Cockpit.suggested_scope_mode(),
+            ScopeMode::Changed
+        ));
     }
 
     #[test]
@@ -623,6 +648,19 @@ mod tests {
     #[test]
     fn test_run_mode_resolve_release() {
         assert_eq!(RunMode::Release.resolve(), RunMode::Release);
+    }
+
+    #[test]
+    fn test_run_mode_resolve_cockpit() {
+        assert_eq!(RunMode::Cockpit.resolve(), RunMode::Cockpit);
+    }
+
+    #[test]
+    fn test_run_mode_is_cockpit() {
+        assert!(!RunMode::Auto.is_cockpit());
+        assert!(!RunMode::Pr.is_cockpit());
+        assert!(!RunMode::Release.is_cockpit());
+        assert!(RunMode::Cockpit.is_cockpit());
     }
 
     #[test]

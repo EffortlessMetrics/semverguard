@@ -2,6 +2,40 @@ use crate::{BaselineConfig, RunReport};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Status of a capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CapabilityStatus {
+    /// Capability is available and was used successfully.
+    Available,
+    /// Capability is not available (e.g., git not found, baseline not resolved).
+    Unavailable,
+    /// Capability was explicitly skipped.
+    Skipped,
+}
+
+/// Capability status with optional detail.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CapabilityInfo {
+    /// Status of this capability.
+    pub status: CapabilityStatus,
+    /// Optional detail explaining the status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Capabilities block for "No Green By Omission".
+///
+/// This block explicitly reports the status of key capabilities
+/// to prevent silent passes when prerequisites are missing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunCapabilities {
+    /// Git provider availability.
+    pub git: CapabilityInfo,
+    /// Baseline resolution status.
+    pub baseline: CapabilityInfo,
+}
+
 /// Sensor report envelope for cockpit ingestion (v1).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SensorReportV1 {
@@ -47,6 +81,9 @@ pub struct RunInfo {
     pub workspace_root: PathBuf,
     /// Baseline configuration used.
     pub baseline: BaselineConfig,
+    /// Capabilities status for "No Green By Omission".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<RunCapabilities>,
 }
 
 /// Final verdict for a run.
@@ -90,6 +127,12 @@ pub struct Finding {
     /// Optional structured data payload.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
+    /// Stable semantic fingerprint for deduplication.
+    ///
+    /// Computed from check_id, code, package name, and version.
+    /// Enables deterministic deduplication across runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
 }
 
 /// Severity levels for findings.
@@ -179,6 +222,7 @@ mod tests {
                 engine: None,
                 inferred_required_bump: None,
                 failure_kind: None,
+                baseline_error: None,
             }],
             summary: Summary {
                 total: 1,
@@ -205,6 +249,7 @@ mod tests {
                 duration_ms: 1000,
                 workspace_root: report.workspace_root.clone(),
                 baseline: BaselineConfig::default(),
+                capabilities: None,
             },
             verdict: Verdict {
                 status: VerdictStatus::Pass,
@@ -288,6 +333,7 @@ mod tests {
                 duration_ms: 1000,
                 workspace_root: report.workspace_root.clone(),
                 baseline: BaselineConfig::default(),
+                capabilities: None,
             },
             verdict: Verdict {
                 status: VerdictStatus::Pass,

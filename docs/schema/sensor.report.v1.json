@@ -1,5 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "capability_info": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["available", "unavailable", "skipped"] },
+        "detail": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    }
+  },
   "type": "object",
   "required": ["schema", "tool", "run", "verdict", "findings", "artifacts"],
   "properties": {
@@ -22,7 +33,15 @@
         "finished_at": { "type": "string" },
         "duration_ms": { "type": "integer" },
         "workspace_root": { "type": "string" },
-        "baseline": { "type": "object" }
+        "baseline": { "type": "object" },
+        "capabilities": {
+          "type": ["object", "null"],
+          "properties": {
+            "git": { "$ref": "#/$defs/capability_info" },
+            "baseline": { "$ref": "#/$defs/capability_info" }
+          },
+          "additionalProperties": true
+        }
       },
       "additionalProperties": true
     },
@@ -46,7 +65,8 @@
           "level": { "enum": ["error", "warning", "info"] },
           "message": { "type": "string" },
           "location": { "type": ["object", "null"] },
-          "data": { "type": ["object", "array", "string", "number", "boolean", "null"] }
+          "data": { "type": ["object", "array", "string", "number", "boolean", "null"] },
+          "fingerprint": { "type": ["string", "null"] }
         },
         "additionalProperties": true
       }

@@ -112,33 +112,46 @@
           "ruleId": "semverguard/baseline-error",
           "level": "warning",
           "message": {
-            "text": "Baseline error for `beta` (v0.2.0): baseline not found"
+            "text": "Baseline error for `beta` (v0.2.0): baseline not found (see raw log: artifacts/semverguard/raw/beta-0.2.0.stderr.log)"
           },
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "artifacts/semverguard/raw/beta-0.2.0.stderr.log"
+                  "uri": "manifest-beta.toml"
                 }
               }
             }
-          ]
+          ],
+          "properties": {
+            "packageName": "beta",
+            "packageVersion": "0.2.0",
+            "rawStderrLog": "artifacts/semverguard/raw/beta-0.2.0.stderr.log",
+            "failureKind": "baseline-error"
+          }
         },
         {
           "ruleId": "semverguard/major-bump-required",
           "level": "error",
           "message": {
-            "text": "Package `alpha` (v1.0.0) requires a major version bump"
+            "text": "Package `alpha` (v1.0.0) requires a major version bump (see raw log: artifacts/semverguard/raw/alpha-1.0.0.stderr.log)"
           },
           "locations": [
             {
               "physicalLocation": {
                 "artifactLocation": {
-                  "uri": "artifacts/semverguard/raw/alpha-1.0.0.stderr.log"
+                  "uri": "manifest-alpha.toml"
                 }
               }
             }
-          ]
+          ],
+          "properties": {
+            "packageName": "alpha",
+            "packageVersion": "1.0.0",
+            "requiredBump": "major",
+            "rawStderrLog": "artifacts/semverguard/raw/alpha-1.0.0.stderr.log",
+            "failureKind": "semver-violation"
+          }
         }
       ],
       "invocations": [

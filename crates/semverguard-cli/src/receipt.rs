@@ -1,11 +1,12 @@
 use crate::comment;
 use crate::sarif;
 use semverguard_types::{
-    ArtifactIndex, BaselineConfig, FailureKind, Finding, FindingLevel, FindingLocation,
-    PackageReport, PackageStatus, RawLogRef, RunReport, SemverguardData, SensorReportV1, ToolInfo,
-    Verdict, VerdictStatus,
+    ArtifactIndex, BaselineConfig, CapabilityInfo, CapabilityStatus, FailureKind, Finding,
+    FindingLevel, FindingLocation, PackageReport, PackageStatus, RawLogRef, RunCapabilities,
+    RunReport, SemverguardData, SensorReportV1, ToolInfo, Verdict, VerdictStatus,
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,6 +26,94 @@ impl ToolErrorFinding {
             message: message.into(),
         }
     }
+}
+
+/// Context for building capability status in receipts.
+///
+/// This provides the "No Green By Omission" capability reporting,
+/// ensuring that silent passes when prerequisites are missing are detected.
+#[derive(Debug, Clone, Default)]
+pub struct CapabilityContext {
+    /// Whether git was available and used successfully.
+    pub git_available: bool,
+    /// Optional detail about git status.
+    pub git_detail: Option<String>,
+    /// Whether baseline was resolved successfully.
+    pub baseline_available: bool,
+    /// Optional detail about baseline status.
+    pub baseline_detail: Option<String>,
+}
+
+impl CapabilityContext {
+    /// Create a new capability context with default values (all unavailable).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Mark git as available.
+    pub fn with_git_available(mut self, available: bool) -> Self {
+        self.git_available = available;
+        self
+    }
+
+    /// Set git detail message.
+    pub fn with_git_detail(mut self, detail: impl Into<String>) -> Self {
+        self.git_detail = Some(detail.into());
+        self
+    }
+
+    /// Mark baseline as available.
+    pub fn with_baseline_available(mut self, available: bool) -> Self {
+        self.baseline_available = available;
+        self
+    }
+
+    /// Set baseline detail message.
+    pub fn with_baseline_detail(mut self, detail: impl Into<String>) -> Self {
+        self.baseline_detail = Some(detail.into());
+        self
+    }
+
+    /// Build the RunCapabilities from this context.
+    pub fn build(&self) -> RunCapabilities {
+        RunCapabilities {
+            git: CapabilityInfo {
+                status: if self.git_available {
+                    CapabilityStatus::Available
+                } else {
+                    CapabilityStatus::Unavailable
+                },
+                detail: self.git_detail.clone(),
+            },
+            baseline: CapabilityInfo {
+                status: if self.baseline_available {
+                    CapabilityStatus::Available
+                } else {
+                    CapabilityStatus::Unavailable
+                },
+                detail: self.baseline_detail.clone(),
+            },
+        }
+    }
+}
+
+/// Compute a stable semantic fingerprint for a finding.
+///
+/// The fingerprint is a 32-character hex string derived from the SHA-256 hash
+/// of the check_id, code, package name, and package version. This enables
+/// deterministic deduplication across runs.
+fn compute_fingerprint(check_id: &str, code: &str, pkg_name: &str, pkg_version: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"semverguard\0");
+    hasher.update(check_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(code.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(pkg_name.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(pkg_version.as_bytes());
+    let result = hasher.finalize();
+    hex::encode(&result[..16])
 }
 
 /// Resolve the artifacts directory against the workspace root.
@@ -65,6 +154,9 @@ pub fn build_artifact_index(
 }
 
 /// Build a receipt from a run report and tool errors.
+///
+/// This is a convenience wrapper that calls `build_receipt_with_capabilities` without capabilities.
+#[allow(dead_code)]
 pub fn build_receipt(
     report: Option<&RunReport>,
     errors: &[ToolErrorFinding],
@@ -72,19 +164,32 @@ pub fn build_receipt(
     baseline: &BaselineConfig,
     workspace_root: &Path,
 ) -> SensorReportV1 {
+    build_receipt_with_capabilities(report, errors, artifacts, baseline, workspace_root, None)
+}
+
+/// Build a receipt from a run report, tool errors, and capability context.
+pub fn build_receipt_with_capabilities(
+    report: Option<&RunReport>,
+    errors: &[ToolErrorFinding],
+    artifacts: &ArtifactIndex,
+    baseline: &BaselineConfig,
+    workspace_root: &Path,
+    capabilities: Option<&CapabilityContext>,
+) -> SensorReportV1 {
     let (run_info, findings_from_report) = match report {
         Some(report) => (
-            build_run_info(report, baseline),
+            build_run_info(report, baseline, capabilities),
             build_findings(report, artifacts),
         ),
         None => (
-            build_run_info_from_now(baseline, workspace_root),
+            build_run_info_from_now(baseline, workspace_root, capabilities),
             Vec::new(),
         ),
     };
 
     let mut findings = findings_from_report;
     for err in errors {
+        // Tool errors don't have package context, so no fingerprint
         findings.push(Finding {
             check_id: "tool".to_string(),
             code: "error".to_string(),
@@ -92,6 +197,7 @@ pub fn build_receipt(
             message: err.message.clone(),
             location: None,
             data: None,
+            fingerprint: None,
         });
     }
 
@@ -188,7 +294,11 @@ pub fn write_receipt_bundle(
     Ok(())
 }
 
-fn build_run_info(report: &RunReport, baseline: &BaselineConfig) -> semverguard_types::RunInfo {
+fn build_run_info(
+    report: &RunReport,
+    baseline: &BaselineConfig,
+    capabilities: Option<&CapabilityContext>,
+) -> semverguard_types::RunInfo {
     let duration_ms =
         duration_ms_from_strings(&report.started_at, &report.finished_at).unwrap_or(0);
     semverguard_types::RunInfo {
@@ -197,12 +307,14 @@ fn build_run_info(report: &RunReport, baseline: &BaselineConfig) -> semverguard_
         duration_ms,
         workspace_root: report.workspace_root.clone(),
         baseline: baseline.clone(),
+        capabilities: capabilities.map(|c| c.build()),
     }
 }
 
 fn build_run_info_from_now(
     baseline: &BaselineConfig,
     workspace_root: &Path,
+    capabilities: Option<&CapabilityContext>,
 ) -> semverguard_types::RunInfo {
     let now = OffsetDateTime::now_utc();
     let ts = now
@@ -214,6 +326,7 @@ fn build_run_info_from_now(
         duration_ms: 0,
         workspace_root: workspace_root.to_path_buf(),
         baseline: baseline.clone(),
+        capabilities: capabilities.map(|c| c.build()),
     }
 }
 
@@ -275,6 +388,9 @@ fn build_findings(report: &RunReport, artifacts: &ArtifactIndex) -> Vec<Finding>
             "manifest_path": pkg.manifest_path.display().to_string(),
         }));
 
+        // Compute fingerprint for deduplication
+        let fingerprint = Some(compute_fingerprint(check_id, code, &pkg.name, &pkg.version));
+
         findings.push(Finding {
             check_id: check_id.to_string(),
             code: code.to_string(),
@@ -282,6 +398,7 @@ fn build_findings(report: &RunReport, artifacts: &ArtifactIndex) -> Vec<Finding>
             message,
             location,
             data,
+            fingerprint,
         });
     }
 
@@ -500,7 +617,7 @@ fn failure_kind_str(kind: FailureKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use semverguard_types::{BaselineConfig, PackageStatus, RequiredBump, Summary};
+    use semverguard_types::{BaselineConfig, CapabilityStatus, PackageStatus, RequiredBump, Summary};
 
     fn sample_report() -> RunReport {
         RunReport {
@@ -619,5 +736,121 @@ mod tests {
         assert!(comment.contains("### Failed packages"));
         assert!(comment.contains("### Skipped packages"));
         assert!(comment.contains("### Warnings / tool errors"));
+    }
+
+    #[test]
+    fn test_fingerprint_computation_deterministic() {
+        let fp1 = compute_fingerprint("semver", "violation", "my-crate", "1.0.0");
+        let fp2 = compute_fingerprint("semver", "violation", "my-crate", "1.0.0");
+        assert_eq!(fp1, fp2);
+        assert_eq!(fp1.len(), 32); // 16 bytes = 32 hex chars
+    }
+
+    #[test]
+    fn test_fingerprint_different_for_different_inputs() {
+        let fp1 = compute_fingerprint("semver", "violation", "crate-a", "1.0.0");
+        let fp2 = compute_fingerprint("semver", "violation", "crate-b", "1.0.0");
+        let fp3 = compute_fingerprint("semver", "violation", "crate-a", "2.0.0");
+        let fp4 = compute_fingerprint("baseline", "missing", "crate-a", "1.0.0");
+        assert_ne!(fp1, fp2);
+        assert_ne!(fp1, fp3);
+        assert_ne!(fp1, fp4);
+    }
+
+    #[test]
+    fn test_capability_context_default() {
+        let ctx = CapabilityContext::new();
+        assert!(!ctx.git_available);
+        assert!(!ctx.baseline_available);
+        assert!(ctx.git_detail.is_none());
+        assert!(ctx.baseline_detail.is_none());
+    }
+
+    #[test]
+    fn test_capability_context_builder() {
+        let ctx = CapabilityContext::new()
+            .with_git_available(true)
+            .with_git_detail("git 2.39.0")
+            .with_baseline_available(true)
+            .with_baseline_detail("baseline resolved from origin/main");
+
+        let caps = ctx.build();
+        assert_eq!(caps.git.status, CapabilityStatus::Available);
+        assert_eq!(caps.git.detail, Some("git 2.39.0".to_string()));
+        assert_eq!(caps.baseline.status, CapabilityStatus::Available);
+        assert_eq!(
+            caps.baseline.detail,
+            Some("baseline resolved from origin/main".to_string())
+        );
+    }
+
+    #[test]
+    fn test_capability_context_unavailable() {
+        let ctx = CapabilityContext::new()
+            .with_git_available(false)
+            .with_git_detail("git not found")
+            .with_baseline_available(false)
+            .with_baseline_detail("no baseline configured");
+
+        let caps = ctx.build();
+        assert_eq!(caps.git.status, CapabilityStatus::Unavailable);
+        assert_eq!(caps.baseline.status, CapabilityStatus::Unavailable);
+    }
+
+    #[test]
+    fn test_build_receipt_with_capabilities() {
+        let report = sample_report();
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            Path::new("artifacts/semverguard"),
+            Some(&report),
+            false,
+        );
+        let ctx = CapabilityContext::new()
+            .with_git_available(true)
+            .with_baseline_available(true);
+
+        let receipt = build_receipt_with_capabilities(
+            Some(&report),
+            &[],
+            &artifacts,
+            &BaselineConfig::default(),
+            report.workspace_root.as_path(),
+            Some(&ctx),
+        );
+
+        assert!(receipt.run.capabilities.is_some());
+        let caps = receipt.run.capabilities.unwrap();
+        assert_eq!(caps.git.status, CapabilityStatus::Available);
+        assert_eq!(caps.baseline.status, CapabilityStatus::Available);
+    }
+
+    #[test]
+    fn test_findings_have_fingerprints() {
+        let report = sample_report();
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            Path::new("artifacts/semverguard"),
+            Some(&report),
+            false,
+        );
+        let receipt = build_receipt(
+            Some(&report),
+            &[],
+            &artifacts,
+            &BaselineConfig::default(),
+            report.workspace_root.as_path(),
+        );
+
+        // Findings from packages should have fingerprints
+        for finding in &receipt.findings {
+            if finding.check_id != "tool" {
+                assert!(
+                    finding.fingerprint.is_some(),
+                    "Finding {} should have fingerprint",
+                    finding.check_id
+                );
+            }
+        }
     }
 }

@@ -15,7 +15,14 @@
       "version": null,
       "rev": null,
       "root": null,
-      "rustdoc": null
+      "rustdoc": null,
+      "on_error": {
+        "new_crate": "warn",
+        "missing_revision": "fail",
+        "shallow_clone": "fail",
+        "rustdoc_failure": "fail",
+        "not_published": "warn"
+      }
     }
   },
   "verdict": {
@@ -38,7 +45,8 @@
         "package": "beta",
         "required_bump": null,
         "version": "0.2.0"
-      }
+      },
+      "fingerprint": "55c6c63ec662ae3c54cafae7d58ad3ed"
     },
     {
       "check_id": "semver",
@@ -55,7 +63,8 @@
         "package": "alpha",
         "required_bump": "major",
         "version": "1.0.0"
-      }
+      },
+      "fingerprint": "d168f6b47520325f9be045d09b02b05e"
     }
   ],
   "data": {

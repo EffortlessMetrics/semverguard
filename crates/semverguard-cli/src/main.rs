@@ -19,8 +19,8 @@ mod receipt;
 mod sarif;
 use progress::{create_progress_reporter, ProgressCallbackAdapter, ProgressChoice};
 use receipt::{
-    build_artifact_index, build_receipt, exit_code_from_receipt, has_tool_error,
-    resolve_artifacts_dir, write_receipt_bundle, ToolErrorFinding,
+    build_artifact_index, build_receipt_with_capabilities, exit_code_from_receipt, has_tool_error,
+    resolve_artifacts_dir, write_receipt_bundle, CapabilityContext, ToolErrorFinding,
 };
 
 #[derive(Parser, Debug)]
@@ -215,6 +215,8 @@ enum RunModeOpt {
     Pr,
     /// Release mode: strict enforcement.
     Release,
+    /// Cockpit mode: always write receipt, exit 0 if written successfully.
+    Cockpit,
 }
 
 impl From<RunModeOpt> for RunMode {
@@ -223,6 +225,7 @@ impl From<RunModeOpt> for RunMode {
             RunModeOpt::Auto => RunMode::Auto,
             RunModeOpt::Pr => RunMode::Pr,
             RunModeOpt::Release => RunMode::Release,
+            RunModeOpt::Cockpit => RunMode::Cockpit,
         }
     }
 }
@@ -305,6 +308,11 @@ fn apply_cli_overrides(cfg: &mut SemverguardConfig, args: &CheckArgs) {
         cfg.mode = mode.clone().into();
     }
 
+    // Cockpit mode forces receipt format
+    if cfg.mode.is_cockpit() {
+        cfg.output.format = OutputFormat::Receipt;
+    }
+
     if args.changed {
         cfg.scope.mode = semverguard_types::ScopeMode::Changed;
     }
@@ -328,14 +336,20 @@ fn apply_cli_overrides(cfg: &mut SemverguardConfig, args: &CheckArgs) {
         cfg.engine.extra_args.extend(args.engine_args.clone());
     }
 
-    if let Some(fmt) = &args.format {
-        cfg.output.format = fmt.clone().into();
+    // Only apply format override if not in cockpit mode (cockpit forces receipt)
+    if !cfg.mode.is_cockpit() {
+        if let Some(fmt) = &args.format {
+            cfg.output.format = fmt.clone().into();
+        }
     }
 
     if let Some(json_path) = &args.json {
         cfg.output.json_path = Some(json_path.clone());
         // If the user asked for JSON explicitly, default to both unless they also set --format.
-        if args.format.is_none() && matches!(cfg.output.format, OutputFormat::Text) {
+        if args.format.is_none()
+            && matches!(cfg.output.format, OutputFormat::Text)
+            && !cfg.mode.is_cockpit()
+        {
             cfg.output.format = OutputFormat::Both;
         }
     }
@@ -450,13 +464,36 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
             Some(&report),
             sarif_requested,
         );
-        let receipt = build_receipt(
+
+        // Build capability context based on the run configuration
+        let capability_ctx = build_capability_context(&config, &report);
+
+        let receipt = build_receipt_with_capabilities(
             Some(&report),
             &[],
             &artifact_index,
             &config.baseline,
             &args.workspace_root,
+            Some(&capability_ctx),
         );
+
+        // In cockpit mode, exit 0 if receipt write succeeds (even with failures)
+        if config.mode.is_cockpit() {
+            match write_receipt_bundle(
+                &artifacts_root,
+                &receipt,
+                Some(&report),
+                sarif_requested,
+                config.output.pretty_json,
+            ) {
+                Ok(()) => return Ok(0),
+                Err(e) => {
+                    eprintln!("FATAL: failed to write receipt: {e}");
+                    return Ok(1);
+                }
+            }
+        }
+
         write_receipt_bundle(
             &artifacts_root,
             &receipt,
@@ -499,13 +536,39 @@ fn handle_tool_error(
     let errors = vec![ToolErrorFinding::new(err.to_string())];
     let artifact_index =
         build_artifact_index(workspace_root, artifacts_root, None, sarif_requested);
-    let receipt = build_receipt(
+
+    // Build capability context indicating failure
+    let capability_ctx = CapabilityContext::new()
+        .with_git_available(matches!(config.baseline.kind, BaselineKind::Git))
+        .with_baseline_available(false)
+        .with_baseline_detail(format!("error: {err}"));
+
+    let receipt = build_receipt_with_capabilities(
         None,
         &errors,
         &artifact_index,
         &config.baseline,
         workspace_root,
+        Some(&capability_ctx),
     );
+
+    // In cockpit mode, exit 0 if receipt write succeeds (even with tool errors)
+    if config.mode.is_cockpit() {
+        match write_receipt_bundle(
+            artifacts_root,
+            &receipt,
+            None,
+            sarif_requested,
+            config.output.pretty_json,
+        ) {
+            Ok(()) => return Ok(0),
+            Err(e) => {
+                eprintln!("FATAL: failed to write receipt: {e}");
+                return Ok(1);
+            }
+        }
+    }
+
     write_receipt_bundle(
         artifacts_root,
         &receipt,
@@ -519,6 +582,48 @@ fn handle_tool_error(
         has_tool_error(&receipt.findings),
     );
     Ok(code)
+}
+
+/// Build capability context for receipt generation.
+///
+/// Determines capability status based on configuration and run results.
+fn build_capability_context(config: &SemverguardConfig, report: &RunReport) -> CapabilityContext {
+    // Git is available if we used git baseline mode
+    let git_available = matches!(config.baseline.kind, BaselineKind::Git);
+    let git_detail = if git_available {
+        config.baseline.rev.clone()
+    } else {
+        None
+    };
+
+    // Baseline is available if we didn't have any baseline errors
+    let baseline_available = !report.packages.iter().any(|p| {
+        p.status == PackageStatus::Failed
+            && p.failure_kind == Some(FailureKind::BaselineError)
+    });
+    let baseline_detail = if baseline_available {
+        match config.baseline.kind {
+            BaselineKind::Git => config.baseline.rev.clone().map(|r| format!("git:{r}")),
+            BaselineKind::CratesIo => {
+                config.baseline.version.clone().map(|v| format!("crates-io:{v}"))
+            }
+        }
+    } else {
+        Some("baseline resolution failed".to_string())
+    };
+
+    let mut ctx = CapabilityContext::new()
+        .with_git_available(git_available)
+        .with_baseline_available(baseline_available);
+
+    if let Some(detail) = git_detail {
+        ctx = ctx.with_git_detail(detail);
+    }
+    if let Some(detail) = baseline_detail {
+        ctx = ctx.with_baseline_detail(detail);
+    }
+
+    ctx
 }
 
 fn exit_code_from_report(

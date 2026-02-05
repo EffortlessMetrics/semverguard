@@ -107,6 +107,7 @@ fn test_run_report_with_all_statuses_validates_against_schema() {
                 }),
                 inferred_required_bump: None,
                 failure_kind: None,
+                baseline_error: None,
             },
             PackageReport {
                 name: "lib-b".to_string(),
@@ -125,6 +126,7 @@ fn test_run_report_with_all_statuses_validates_against_schema() {
                 }),
                 inferred_required_bump: Some(RequiredBump::Major),
                 failure_kind: Some(FailureKind::SemverViolation),
+                baseline_error: None,
             },
             PackageReport {
                 name: "lib-c".to_string(),
@@ -137,6 +139,7 @@ fn test_run_report_with_all_statuses_validates_against_schema() {
                 engine: None,
                 inferred_required_bump: None,
                 failure_kind: None,
+                baseline_error: None,
             },
         ],
         summary: Summary {
@@ -177,6 +180,7 @@ fn test_run_report_all_failure_kinds_validate() {
                 engine: None,
                 inferred_required_bump: None,
                 failure_kind: Some(failure_kind),
+                baseline_error: None,
             }],
             summary: Summary {
                 total: 1,
@@ -227,6 +231,7 @@ fn test_run_report_all_required_bumps_validate() {
                 }),
                 inferred_required_bump: Some(bump),
                 failure_kind: Some(FailureKind::SemverViolation),
+                baseline_error: None,
             }],
             summary: Summary {
                 total: 1,
@@ -314,6 +319,7 @@ fn test_receipt_pass_validates_against_schema() {
             duration_ms: 60000,
             workspace_root: PathBuf::from("/workspace"),
             baseline: BaselineConfig::default(),
+            capabilities: None,
         },
         verdict: semverguard_types::Verdict {
             status: semverguard_types::VerdictStatus::Pass,
@@ -355,7 +361,9 @@ fn test_receipt_fail_with_findings_validates_against_schema() {
                 rev: Some("origin/main".to_string()),
                 root: None,
                 rustdoc: None,
+                on_error: semverguard_types::BaselineErrorBehavior::default(),
             },
+            capabilities: None,
         },
         verdict: semverguard_types::Verdict {
             status: semverguard_types::VerdictStatus::Fail,
@@ -377,6 +385,7 @@ fn test_receipt_fail_with_findings_validates_against_schema() {
                 "version": "1.0.0",
                 "required_bump": "major"
             })),
+            fingerprint: None,
         }],
         data: None,
         artifacts: semverguard_types::ArtifactIndex {
@@ -419,6 +428,7 @@ fn test_receipt_all_verdict_statuses_validate() {
                 duration_ms: 1000,
                 workspace_root: PathBuf::from("/workspace"),
                 baseline: BaselineConfig::default(),
+                capabilities: None,
             },
             verdict: semverguard_types::Verdict {
                 status,
@@ -461,6 +471,7 @@ fn test_receipt_all_finding_levels_validate() {
                 duration_ms: 1000,
                 workspace_root: PathBuf::from("/workspace"),
                 baseline: BaselineConfig::default(),
+                capabilities: None,
             },
             verdict: semverguard_types::Verdict {
                 status: semverguard_types::VerdictStatus::Fail,
@@ -473,6 +484,7 @@ fn test_receipt_all_finding_levels_validate() {
                 message: "test message".to_string(),
                 location: None,
                 data: None,
+                fingerprint: None,
             }],
             data: None,
             artifacts: semverguard_types::ArtifactIndex {
@@ -609,6 +621,7 @@ fn test_run_report_packages_should_be_sorted_by_name() {
             engine: None,
             inferred_required_bump: None,
             failure_kind: None,
+            baseline_error: None,
         },
         PackageReport {
             name: "alpha".to_string(),
@@ -621,6 +634,7 @@ fn test_run_report_packages_should_be_sorted_by_name() {
             engine: None,
             inferred_required_bump: None,
             failure_kind: None,
+            baseline_error: None,
         },
         PackageReport {
             name: "beta".to_string(),
@@ -633,6 +647,7 @@ fn test_run_report_packages_should_be_sorted_by_name() {
             engine: None,
             inferred_required_bump: None,
             failure_kind: None,
+            baseline_error: None,
         },
     ];
 
@@ -854,6 +869,7 @@ fn test_package_report_json_structure_is_stable() {
         }),
         inferred_required_bump: None,
         failure_kind: None,
+        baseline_error: None,
     };
 
     let json = serde_json::to_value(&pkg).unwrap();
