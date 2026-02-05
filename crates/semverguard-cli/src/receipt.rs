@@ -73,8 +73,14 @@ pub fn build_receipt(
     workspace_root: &Path,
 ) -> SensorReportV1 {
     let (run_info, findings_from_report) = match report {
-        Some(report) => (build_run_info(report, baseline), build_findings(report, artifacts)),
-        None => (build_run_info_from_now(baseline, workspace_root), Vec::new()),
+        Some(report) => (
+            build_run_info(report, baseline),
+            build_findings(report, artifacts),
+        ),
+        None => (
+            build_run_info_from_now(baseline, workspace_root),
+            Vec::new(),
+        ),
     };
 
     let mut findings = findings_from_report;
@@ -90,16 +96,11 @@ pub fn build_receipt(
     }
 
     findings.sort_by(|a, b| {
-        (
-            a.check_id.as_str(),
-            a.code.as_str(),
-            a.message.as_str(),
-        )
-            .cmp(&(
-                b.check_id.as_str(),
-                b.code.as_str(),
-                b.message.as_str(),
-            ))
+        (a.check_id.as_str(), a.code.as_str(), a.message.as_str()).cmp(&(
+            b.check_id.as_str(),
+            b.code.as_str(),
+            b.message.as_str(),
+        ))
     });
 
     let (verdict_status, verdict_reason) = derive_verdict(&findings, report);
@@ -188,8 +189,8 @@ pub fn write_receipt_bundle(
 }
 
 fn build_run_info(report: &RunReport, baseline: &BaselineConfig) -> semverguard_types::RunInfo {
-    let duration_ms = duration_ms_from_strings(&report.started_at, &report.finished_at)
-        .unwrap_or(0);
+    let duration_ms =
+        duration_ms_from_strings(&report.started_at, &report.finished_at).unwrap_or(0);
     semverguard_types::RunInfo {
         started_at: report.started_at.clone(),
         finished_at: report.finished_at.clone(),
@@ -233,7 +234,9 @@ fn build_findings(report: &RunReport, artifacts: &ArtifactIndex) -> Vec<Finding>
     let mut findings = Vec::new();
 
     let mut packages = report.packages.iter().collect::<Vec<_>>();
-    packages.sort_by(|a, b| (a.name.as_str(), a.version.as_str()).cmp(&(b.name.as_str(), b.version.as_str())));
+    packages.sort_by(|a, b| {
+        (a.name.as_str(), a.version.as_str()).cmp(&(b.name.as_str(), b.version.as_str()))
+    });
 
     for pkg in packages {
         if pkg.status != PackageStatus::Failed {
@@ -255,7 +258,10 @@ fn build_findings(report: &RunReport, artifacts: &ArtifactIndex) -> Vec<Finding>
             .and_then(|(stdout, stderr)| stderr.clone().or_else(|| stdout.clone()));
 
         let location = Some(FindingLocation {
-            path: Some(normalize_receipt_path(&report.workspace_root, &pkg.manifest_path)),
+            path: Some(normalize_receipt_path(
+                &report.workspace_root,
+                &pkg.manifest_path,
+            )),
             line: None,
             column: None,
             raw_log,
@@ -304,7 +310,10 @@ fn build_failure_message(pkg: &PackageReport, kind: FailureKind) -> String {
                 .filter(|s| !s.is_empty())
                 .or_else(|| pkg.skip_reason.clone())
                 .unwrap_or_else(|| "baseline error".to_string());
-            format!("Baseline error for `{}` (v{}): {}", pkg.name, pkg.version, detail)
+            format!(
+                "Baseline error for `{}` (v{}): {}",
+                pkg.name, pkg.version, detail
+            )
         }
         FailureKind::ToolError => {
             let detail = pkg
@@ -314,7 +323,10 @@ fn build_failure_message(pkg: &PackageReport, kind: FailureKind) -> String {
                 .filter(|s| !s.is_empty())
                 .or_else(|| pkg.skip_reason.clone())
                 .unwrap_or_else(|| "tool error".to_string());
-            format!("Tool error for `{}` (v{}): {}", pkg.name, pkg.version, detail)
+            format!(
+                "Tool error for `{}` (v{}): {}",
+                pkg.name, pkg.version, detail
+            )
         }
         FailureKind::Unknown => format!(
             "Package `{}` (v{}) failed with an unknown error",
@@ -341,27 +353,21 @@ fn derive_verdict(
     }
 
     if has_tool {
-        return (
-            VerdictStatus::Fail,
-            Some("tool error".to_string()),
-        );
+        return (VerdictStatus::Fail, Some("tool error".to_string()));
     }
     if has_semver {
-        return (
-            VerdictStatus::Fail,
-            Some("semver violation".to_string()),
-        );
+        return (VerdictStatus::Fail, Some("semver violation".to_string()));
     }
     if has_baseline {
-        return (
-            VerdictStatus::Warn,
-            Some("baseline issue".to_string()),
-        );
+        return (VerdictStatus::Warn, Some("baseline issue".to_string()));
     }
 
     if let Some(report) = report {
         if report.summary.total > 0 && report.summary.total == report.summary.skipped {
-            return (VerdictStatus::Skip, Some("all packages skipped".to_string()));
+            return (
+                VerdictStatus::Skip,
+                Some("all packages skipped".to_string()),
+            );
         }
     }
 
@@ -374,7 +380,9 @@ fn build_raw_log_refs(
     artifacts_dir: &Path,
 ) -> Vec<RawLogRef> {
     let mut packages = report.packages.iter().collect::<Vec<_>>();
-    packages.sort_by(|a, b| (a.name.as_str(), a.version.as_str()).cmp(&(b.name.as_str(), b.version.as_str())));
+    packages.sort_by(|a, b| {
+        (a.name.as_str(), a.version.as_str()).cmp(&(b.name.as_str(), b.version.as_str()))
+    });
 
     let mut raw_logs = Vec::new();
     for pkg in packages {
@@ -408,7 +416,9 @@ fn build_raw_log_map(
 
 fn write_raw_logs(artifacts_dir: &Path, report: &RunReport) -> anyhow::Result<()> {
     let mut packages = report.packages.iter().collect::<Vec<_>>();
-    packages.sort_by(|a, b| (a.name.as_str(), a.version.as_str()).cmp(&(b.name.as_str(), b.version.as_str())));
+    packages.sort_by(|a, b| {
+        (a.name.as_str(), a.version.as_str()).cmp(&(b.name.as_str(), b.version.as_str()))
+    });
 
     for pkg in packages {
         if pkg.status == PackageStatus::Skipped {

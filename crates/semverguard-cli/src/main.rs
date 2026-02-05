@@ -13,10 +13,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
-mod progress;
-mod sarif;
 mod comment;
+mod progress;
 mod receipt;
+mod sarif;
 use progress::{create_progress_reporter, ProgressCallbackAdapter, ProgressChoice};
 use receipt::{
     build_artifact_index, build_receipt, exit_code_from_receipt, has_tool_error,
@@ -230,9 +230,7 @@ fn run() -> Result<i32> {
             run_list(&args)?;
             Ok(0)
         }
-        Commands::Check(args) => {
-            run_check(&args)
-        }
+        Commands::Check(args) => run_check(&args),
     }
 }
 
@@ -371,7 +369,8 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
     let progress_reporter = create_progress_reporter(progress_choice);
     let progress_callback = ProgressCallbackAdapter::new(progress_reporter);
 
-    let runner = SemverguardRunner::with_progress(&workspace, Some(&git), &engine, progress_callback);
+    let runner =
+        SemverguardRunner::with_progress(&workspace, Some(&git), &engine, progress_callback);
 
     // Handle --dry-run: show what would be checked without actually running
     if args.dry_run {
@@ -456,7 +455,8 @@ fn handle_tool_error(
 
     eprintln!("error: {err:?}");
     let errors = vec![ToolErrorFinding::new(err.to_string())];
-    let artifact_index = build_artifact_index(workspace_root, artifacts_root, None, sarif_requested);
+    let artifact_index =
+        build_artifact_index(workspace_root, artifacts_root, None, sarif_requested);
     let receipt = build_receipt(
         None,
         &errors,

@@ -458,10 +458,7 @@ mod tests {
         assert!(matches!(config.format, OutputFormat::Text));
         assert!(config.json_path.is_none());
         assert!(config.pretty_json);
-        assert_eq!(
-            config.artifacts_dir,
-            PathBuf::from("artifacts/semverguard")
-        );
+        assert_eq!(config.artifacts_dir, PathBuf::from("artifacts/semverguard"));
         assert!(!config.warn_as_fail);
     }
 

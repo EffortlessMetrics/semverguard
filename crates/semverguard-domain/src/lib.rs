@@ -11,10 +11,10 @@
 //! It is written against small "ports" traits so the CLI can wire in real adapters,
 //! and tests can wire in fakes.
 
-/// Error types for semverguard operations.
-pub mod error;
 /// Failure classification helpers.
 pub mod classification;
+/// Error types for semverguard operations.
+pub mod error;
 /// Mock/fake implementations of port traits for testing.
 ///
 /// This module is only available when the `test-utils` feature is enabled or in test builds.
@@ -27,8 +27,8 @@ pub mod progress;
 /// The main orchestration runner.
 pub mod runner;
 
-pub use error::*;
 pub use classification::*;
+pub use error::*;
 #[cfg(any(test, feature = "test-utils"))]
 pub use mocks::*;
 pub use ports::*;

@@ -49,7 +49,9 @@ pub fn render_comment(receipt: &SensorReportV1) -> String {
                 _ => true,
             })
             .collect::<Vec<_>>();
-        failed.sort_by(|a, b| (a.name.as_str(), a.version.as_str()).cmp(&(b.name.as_str(), b.version.as_str())));
+        failed.sort_by(|a, b| {
+            (a.name.as_str(), a.version.as_str()).cmp(&(b.name.as_str(), b.version.as_str()))
+        });
 
         if failed.is_empty() {
             lines.push("- (none)".to_string());
@@ -67,9 +69,7 @@ pub fn render_comment(receipt: &SensorReportV1) -> String {
                             .get(&(pkg.name.clone(), pkg.version.clone()))
                             .and_then(|(out, _)| out.clone())
                     });
-                let log_suffix = logs
-                    .map(|p| format!(" (log: {p})"))
-                    .unwrap_or_default();
+                let log_suffix = logs.map(|p| format!(" (log: {p})")).unwrap_or_default();
                 lines.push(format!(
                     "- {} {} (required bump: {}){}",
                     pkg.name, pkg.version, bump, log_suffix
@@ -91,13 +91,18 @@ pub fn render_comment(receipt: &SensorReportV1) -> String {
             .iter()
             .filter(|p| p.status == PackageStatus::Skipped)
             .collect::<Vec<_>>();
-        skipped.sort_by(|a, b| (a.name.as_str(), a.version.as_str()).cmp(&(b.name.as_str(), b.version.as_str())));
+        skipped.sort_by(|a, b| {
+            (a.name.as_str(), a.version.as_str()).cmp(&(b.name.as_str(), b.version.as_str()))
+        });
 
         if skipped.is_empty() {
             lines.push("- (none)".to_string());
         } else {
             for pkg in skipped {
-                let reason = pkg.skip_reason.clone().unwrap_or_else(|| "skipped".to_string());
+                let reason = pkg
+                    .skip_reason
+                    .clone()
+                    .unwrap_or_else(|| "skipped".to_string());
                 lines.push(format!("- {} {} ({})", pkg.name, pkg.version, reason));
             }
         }

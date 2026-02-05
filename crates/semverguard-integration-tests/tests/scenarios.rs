@@ -18,12 +18,12 @@
 //! git changes, and semver check results without requiring actual Cargo projects.
 
 use semver::Version;
-use semverguard_domain::{
-    MockGitProvider, MockSemverEngine, MockWorkspaceProvider, SemverguardRunner,
-};
 use semverguard_cli::receipt::{
     build_artifact_index, build_receipt, exit_code_from_receipt, has_tool_error,
     write_receipt_bundle, ToolErrorFinding,
+};
+use semverguard_domain::{
+    MockGitProvider, MockSemverEngine, MockWorkspaceProvider, SemverguardRunner,
 };
 use semverguard_types::{
     BaselineConfig, BaselineKind, EngineConfig, FeaturesConfig, OutputConfig, PackageStatus,
@@ -1155,11 +1155,7 @@ fn scenario_receipt_exit_codes_and_required_fields() {
         &BaselineConfig::default(),
         temp_dir.path(),
     );
-    let code = exit_code_from_receipt(
-        &receipt.verdict,
-        false,
-        has_tool_error(&receipt.findings),
-    );
+    let code = exit_code_from_receipt(&receipt.verdict, false, has_tool_error(&receipt.findings));
 
     assert_eq!(code, 2);
 

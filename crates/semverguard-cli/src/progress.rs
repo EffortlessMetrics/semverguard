@@ -72,6 +72,7 @@ pub trait ProgressReporter: Send + Sync {
     fn report(&self, event: ProgressEvent<'_>);
 
     /// Finish and clear the progress display.
+    #[allow(dead_code)]
     fn finish(&self);
 }
 
@@ -168,6 +169,8 @@ impl ProgressReporter for LineProgress {
 
 /// A terminal progress reporter with spinner and progress bar.
 pub struct TerminalProgress {
+    /// Held to keep progress bars alive.
+    #[allow(dead_code)]
     multi: MultiProgress,
     progress_bar: ProgressBar,
     spinner: ProgressBar,
@@ -264,15 +267,6 @@ impl ProgressReporter for TerminalProgress {
     }
 }
 
-/// Determine whether to show progress based on the choice and terminal state.
-pub fn should_show_progress(choice: ProgressChoice) -> bool {
-    match choice {
-        ProgressChoice::Always => true,
-        ProgressChoice::Never => false,
-        ProgressChoice::Auto => std::io::stderr().is_terminal(),
-    }
-}
-
 /// Create an appropriate progress reporter based on the choice.
 pub fn create_progress_reporter(choice: ProgressChoice) -> Box<dyn ProgressReporter> {
     match choice {
@@ -300,16 +294,6 @@ impl ProgressCallbackAdapter {
     /// Create a new adapter wrapping a ProgressReporter.
     pub fn new(reporter: Box<dyn ProgressReporter>) -> Self {
         Self { reporter }
-    }
-
-    /// Get a reference to the underlying reporter for use when suspending.
-    pub fn reporter(&self) -> &dyn ProgressReporter {
-        self.reporter.as_ref()
-    }
-
-    /// Finish the progress display.
-    pub fn finish(&self) {
-        self.reporter.finish();
     }
 }
 
@@ -386,15 +370,5 @@ mod tests {
         });
         progress.finish();
         // No assertions needed - just verify it doesn't panic
-    }
-
-    #[test]
-    fn test_should_show_progress_always() {
-        assert!(should_show_progress(ProgressChoice::Always));
-    }
-
-    #[test]
-    fn test_should_show_progress_never() {
-        assert!(!should_show_progress(ProgressChoice::Never));
     }
 }

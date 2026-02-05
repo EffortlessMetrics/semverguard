@@ -114,8 +114,7 @@ fn test_receipt_golden_files_and_schema() {
         workspace_root,
     );
 
-    let receipt_json =
-        serde_json::to_string_pretty(&receipt).expect("receipt should serialize");
+    let receipt_json = serde_json::to_string_pretty(&receipt).expect("receipt should serialize");
     assert_eq!(
         normalize_newlines(&receipt_json),
         normalize_newlines(&read_fixture("receipt.json"))
@@ -128,20 +127,18 @@ fn test_receipt_golden_files_and_schema() {
     );
 
     let sarif_log = sarif::receipt_to_sarif(&receipt);
-    let sarif_json =
-        sarif::sarif_to_json(&sarif_log, true).expect("sarif should serialize");
+    let sarif_json = sarif::sarif_to_json(&sarif_log, true).expect("sarif should serialize");
     assert_eq!(
         normalize_newlines(&sarif_json),
         normalize_newlines(&read_fixture("sarif.json"))
     );
 
-    let schema_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/schema/sensor.report.v1.json");
+    let schema_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/schema/sensor.report.v1.json");
     let schema_str = fs::read_to_string(schema_path).expect("schema should exist");
     let schema_json: serde_json::Value =
         serde_json::from_str(&schema_str).expect("schema should be valid JSON");
-    let compiled =
-        jsonschema::JSONSchema::compile(&schema_json).expect("schema should compile");
+    let compiled = jsonschema::JSONSchema::compile(&schema_json).expect("schema should compile");
 
     let value = serde_json::to_value(&receipt).expect("receipt should be JSON value");
     let result = compiled.validate(&value);

@@ -112,7 +112,8 @@ pub enum SarifLevel {
     Warning,
     /// Informational message.
     Note,
-    /// No level specified.
+    /// No level specified (part of SARIF spec).
+    #[allow(dead_code)]
     None,
 }
 
@@ -364,8 +365,7 @@ pub fn report_to_sarif(report: &RunReport) -> SarifLog {
                     name: "semverguard".to_string(),
                     semantic_version: Some(report.semverguard_version.clone()),
                     full_name: Some(format!("semverguard {}", report.semverguard_version)),
-                    information_uri: option_env!("CARGO_PKG_REPOSITORY")
-                        .map(|s| s.to_string()),
+                    information_uri: option_env!("CARGO_PKG_REPOSITORY").map(|s| s.to_string()),
                     rules: generate_rules(),
                 },
             },
@@ -456,7 +456,10 @@ pub fn receipt_to_sarif(receipt: &SensorReportV1) -> SarifLog {
         .collect();
 
     let invocation = SarifInvocation {
-        execution_successful: matches!(receipt.verdict.status, semverguard_types::VerdictStatus::Pass),
+        execution_successful: matches!(
+            receipt.verdict.status,
+            semverguard_types::VerdictStatus::Pass
+        ),
         start_time_utc: Some(receipt.run.started_at.clone()),
         end_time_utc: Some(receipt.run.finished_at.clone()),
         working_directory: Some(SarifArtifactLocation {

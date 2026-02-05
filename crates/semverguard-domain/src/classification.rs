@@ -58,7 +58,12 @@ mod tests {
     use super::*;
     use semverguard_types::RequiredBump;
 
-    fn output(exit_code: Option<i32>, stdout: &str, stderr: &str, bump: Option<RequiredBump>) -> SemverCheckOutput {
+    fn output(
+        exit_code: Option<i32>,
+        stdout: &str,
+        stderr: &str,
+        bump: Option<RequiredBump>,
+    ) -> SemverCheckOutput {
         SemverCheckOutput {
             exit_code,
             success: exit_code == Some(0),
@@ -71,13 +76,19 @@ mod tests {
     #[test]
     fn test_classify_output_semver_violation_exit_code() {
         let out = output(Some(1), "", "", None);
-        assert!(matches!(classify_output(&out), FailureKind::SemverViolation));
+        assert!(matches!(
+            classify_output(&out),
+            FailureKind::SemverViolation
+        ));
     }
 
     #[test]
     fn test_classify_output_semver_violation_required_bump() {
         let out = output(Some(2), "", "", Some(RequiredBump::Major));
-        assert!(matches!(classify_output(&out), FailureKind::SemverViolation));
+        assert!(matches!(
+            classify_output(&out),
+            FailureKind::SemverViolation
+        ));
     }
 
     #[test]
@@ -88,12 +99,7 @@ mod tests {
 
     #[test]
     fn test_classify_output_baseline_error() {
-        let out = output(
-            Some(2),
-            "baseline not found",
-            "unknown revision",
-            None,
-        );
+        let out = output(Some(2), "baseline not found", "unknown revision", None);
         assert!(matches!(classify_output(&out), FailureKind::BaselineError));
     }
 }

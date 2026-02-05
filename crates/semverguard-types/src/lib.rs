@@ -12,15 +12,15 @@
 pub mod config;
 /// Engine request/response types for cargo-semver-checks integration.
 pub mod engine;
-/// Report schema for semver check results.
-pub mod report;
 /// Receipt schema for cockpit integration.
 pub mod receipt;
+/// Report schema for semver check results.
+pub mod report;
 /// Workspace metadata types from cargo.
 pub mod workspace;
 
 pub use config::*;
 pub use engine::*;
-pub use report::*;
 pub use receipt::*;
+pub use report::*;
 pub use workspace::*;
