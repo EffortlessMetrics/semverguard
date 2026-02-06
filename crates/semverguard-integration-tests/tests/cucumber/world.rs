@@ -10,7 +10,7 @@ use semverguard_domain::{
     SemverguardRunner,
 };
 use semverguard_types::{
-    BaselineConfig, EngineConfig, FeaturesConfig, ListResult, OutputConfig, ScopeConfig, ScopeMode,
+    ListResult, ScopeConfig, ScopeMode,
     SemverCheckOutput, SemverguardConfig, WorkspaceMetadata, WorkspacePackage,
 };
 use std::collections::HashMap;
@@ -225,7 +225,6 @@ fn engine_result_to_output(
 /// Create default configuration for testing.
 fn default_config() -> SemverguardConfig {
     SemverguardConfig {
-        baseline: BaselineConfig::default(),
         scope: ScopeConfig {
             mode: ScopeMode::Workspace,
             include: vec![],
@@ -234,8 +233,6 @@ fn default_config() -> SemverguardConfig {
             skip_publish_false: false,
             skip_no_lib: false,
         },
-        features: FeaturesConfig::default(),
-        engine: EngineConfig::default(),
-        output: OutputConfig::default(),
+        ..Default::default()
     }
 }

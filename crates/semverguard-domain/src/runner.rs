@@ -1,5 +1,5 @@
 use crate::classification::{
-    classify_engine_error_detailed, classify_output_detailed, ClassificationResult,
+    classify_engine_error_detailed, classify_output_detailed,
 };
 use crate::error::{Result, SemverguardError};
 use crate::ports::{GitProvider, SemverEngine, WorkspaceProvider};
@@ -565,8 +565,8 @@ mod tests {
     use super::*;
     use semver::Version;
     use semverguard_types::{
-        BaselineConfig, BaselineKind, EngineConfig, FailureKind, FeaturesConfig, OutputConfig,
-        RequiredBump, ScopeConfig, ScopeMode, SemverCheckOutput, SemverguardConfig,
+        BaselineKind, FailureKind, RequiredBump, ScopeConfig, ScopeMode, SemverCheckOutput,
+        SemverguardConfig,
         WorkspaceMetadata, WorkspacePackage,
     };
     use std::cell::RefCell;
@@ -738,7 +738,6 @@ mod tests {
 
     fn default_config() -> SemverguardConfig {
         SemverguardConfig {
-            baseline: BaselineConfig::default(),
             scope: ScopeConfig {
                 mode: ScopeMode::Workspace,
                 include: vec![],
@@ -747,9 +746,7 @@ mod tests {
                 skip_publish_false: false,
                 skip_no_lib: false,
             },
-            features: FeaturesConfig::default(),
-            engine: EngineConfig::default(),
-            output: OutputConfig::default(),
+            ..Default::default()
         }
     }
 

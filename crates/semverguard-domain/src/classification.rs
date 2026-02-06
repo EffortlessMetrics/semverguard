@@ -104,8 +104,15 @@ fn detect_baseline_error_from_message(
     hay: &str,
     crate_name: Option<&str>,
 ) -> Option<BaselineErrorCause> {
-    // Must mention baseline to be a baseline error
-    if !hay.contains("baseline") && !hay.contains("revision") {
+    // Must mention baseline-related keywords to be a baseline error
+    if !hay.contains("baseline")
+        && !hay.contains("revision")
+        && !hay.contains("merge-base")
+        && !hay.contains("merge base")
+        && !hay.contains("not published")
+        && !hay.contains("never published")
+        && !hay.contains("crates.io")
+    {
         return None;
     }
 

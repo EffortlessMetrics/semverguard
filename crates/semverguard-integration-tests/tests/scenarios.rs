@@ -26,8 +26,8 @@ use semverguard_domain::{
     MockGitProvider, MockSemverEngine, MockWorkspaceProvider, SemverguardRunner,
 };
 use semverguard_types::{
-    BaselineConfig, BaselineKind, EngineConfig, FeaturesConfig, OutputConfig, PackageStatus,
-    RunReport, ScopeConfig, ScopeMode, SemverCheckOutput, SemverguardConfig, WorkspaceMetadata,
+    BaselineConfig, BaselineKind, PackageStatus, RunReport, ScopeConfig, ScopeMode,
+    SemverCheckOutput, SemverguardConfig, WorkspaceMetadata,
     WorkspacePackage,
 };
 use std::path::{Path, PathBuf};
@@ -66,7 +66,6 @@ fn make_workspace(workspace_root: &str, packages: Vec<WorkspacePackage>) -> Work
 /// Creates a default config for workspace-mode checks.
 fn default_workspace_config() -> SemverguardConfig {
     SemverguardConfig {
-        baseline: BaselineConfig::default(),
         scope: ScopeConfig {
             mode: ScopeMode::Workspace,
             include: vec![],
@@ -75,9 +74,7 @@ fn default_workspace_config() -> SemverguardConfig {
             skip_publish_false: false,
             skip_no_lib: false,
         },
-        features: FeaturesConfig::default(),
-        engine: EngineConfig::default(),
-        output: OutputConfig::default(),
+        ..Default::default()
     }
 }
 
@@ -97,9 +94,7 @@ fn changed_mode_config(baseline_rev: &str) -> SemverguardConfig {
             skip_publish_false: false,
             skip_no_lib: false,
         },
-        features: FeaturesConfig::default(),
-        engine: EngineConfig::default(),
-        output: OutputConfig::default(),
+        ..Default::default()
     }
 }
 
@@ -1138,6 +1133,7 @@ fn scenario_receipt_exit_codes_and_required_fields() {
             engine: None,
             inferred_required_bump: Some(semverguard_types::RequiredBump::Major),
             failure_kind: Some(semverguard_types::FailureKind::SemverViolation),
+            baseline_error: None,
         }],
         summary: semverguard_types::Summary {
             total: 1,

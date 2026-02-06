@@ -297,7 +297,7 @@ mod tests {
     fn test_markdown_special_characters_in_package_name() {
         // Package names with special markdown characters
         let packages = vec![
-            make_package("my_lib-core", "1.0.0", PackageStatus::Passed),
+            make_package("my_lib-core", "1.0.0", PackageStatus::Failed),
             make_package("pkg-with-dashes", "1.0.0", PackageStatus::Skipped),
         ];
         let mut receipt = minimal_receipt();
