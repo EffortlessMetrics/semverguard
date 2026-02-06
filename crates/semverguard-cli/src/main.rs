@@ -1,27 +1,26 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use globset::Glob;
+use semverguard_core::capability::build_capability_context;
+use semverguard_core::exit_code::exit_code_from_report;
+use semverguard_core::receipt::{
+    CapabilityContext, ToolErrorFinding, build_artifact_index, build_receipt_with_capabilities,
+    exit_code_from_receipt, has_tool_error, resolve_artifacts_dir, write_receipt_bundle,
+};
+use semverguard_core::{config, sarif};
 use semverguard_domain::SemverguardRunner;
 use semverguard_engine::CargoSemverChecksEngine;
 use semverguard_git::GitCli;
 use semverguard_types::{
-    BaselineKind, FailureKind, ListResult, OutputFormat, PackageStatus, RunMode, RunReport,
-    ScopeMode, SemverguardConfig,
+    BaselineKind, ListResult, OutputFormat, RunMode, RunReport, ScopeMode, SemverguardConfig,
 };
 use semverguard_workspace::CargoMetadataWorkspace;
 use std::fs;
 use std::path::{Path, PathBuf};
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
-mod comment;
 mod progress;
-mod receipt;
-mod sarif;
-use progress::{create_progress_reporter, ProgressCallbackAdapter, ProgressChoice};
-use receipt::{
-    build_artifact_index, build_receipt_with_capabilities, exit_code_from_receipt, has_tool_error,
-    resolve_artifacts_dir, write_receipt_bundle, CapabilityContext, ToolErrorFinding,
-};
+use progress::{ProgressCallbackAdapter, ProgressChoice, create_progress_reporter};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -249,10 +248,10 @@ fn run() -> Result<i32> {
             let cfg_path = args
                 .config
                 .unwrap_or_else(|| PathBuf::from("semverguard.toml"));
-            let config = load_config(&cfg_path)?;
+            let cfg = config::load_config(&cfg_path)?;
             // Nothing else to override (yet) besides ensuring workspace_root exists.
-            ensure_workspace_root(&args.workspace_root)?;
-            print_config(&config)?;
+            config::ensure_workspace_root(&args.workspace_root)?;
+            print_config(&cfg)?;
             Ok(0)
         }
         Commands::ValidateConfig(args) => {
@@ -265,35 +264,6 @@ fn run() -> Result<i32> {
         }
         Commands::Check(args) => run_check(&args),
     }
-}
-
-fn ensure_workspace_root(workspace_root: &Path) -> Result<()> {
-    let md = fs::metadata(workspace_root).with_context(|| {
-        format!(
-            "workspace root does not exist: {}",
-            workspace_root.display()
-        )
-    })?;
-    if !md.is_dir() {
-        anyhow::bail!(
-            "workspace root is not a directory: {}",
-            workspace_root.display()
-        );
-    }
-    Ok(())
-}
-
-fn load_config(path: &Path) -> Result<SemverguardConfig> {
-    if !path.exists() {
-        // Use defaults; missing config is not an error.
-        return Ok(SemverguardConfig::default());
-    }
-
-    let raw =
-        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
-    let cfg: SemverguardConfig =
-        toml::from_str(&raw).with_context(|| format!("invalid TOML in {}", path.display()))?;
-    Ok(cfg)
 }
 
 fn print_config(cfg: &SemverguardConfig) -> Result<()> {
@@ -375,21 +345,21 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
         .clone()
         .unwrap_or_else(|| PathBuf::from("semverguard.toml"));
 
-    let cfg_result = load_config(&cfg_path);
-    let mut config = match &cfg_result {
+    let cfg_result = config::load_config(&cfg_path);
+    let mut cfg = match &cfg_result {
         Ok(cfg) => cfg.clone(),
         Err(_) => SemverguardConfig::default(),
     };
-    apply_cli_overrides(&mut config, args);
+    apply_cli_overrides(&mut cfg, args);
 
-    let receipt_requested = matches!(config.output.format, OutputFormat::Receipt);
+    let receipt_requested = matches!(cfg.output.format, OutputFormat::Receipt);
     let sarif_requested = receipt_requested && args.sarif.is_some();
-    let artifacts_root = resolve_artifacts_dir(&args.workspace_root, &config.output.artifacts_dir);
+    let artifacts_root = resolve_artifacts_dir(&args.workspace_root, &cfg.output.artifacts_dir);
 
     if let Err(e) = cfg_result {
         return handle_tool_error(
             e,
-            &config,
+            &cfg,
             &args.workspace_root,
             &artifacts_root,
             receipt_requested,
@@ -397,10 +367,10 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
         );
     }
 
-    if let Err(e) = ensure_workspace_root(&args.workspace_root) {
+    if let Err(e) = config::ensure_workspace_root(&args.workspace_root) {
         return handle_tool_error(
             e,
-            &config,
+            &cfg,
             &args.workspace_root,
             &artifacts_root,
             receipt_requested,
@@ -413,6 +383,10 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
     let git = GitCli::default();
     let engine = CargoSemverChecksEngine::default();
 
+    // Probe git capabilities
+    let git_available = git.is_available(&args.workspace_root);
+    let shallow_clone = git.is_shallow(&args.workspace_root).unwrap_or(false);
+
     // Create progress reporter based on CLI flag
     let progress_choice: ProgressChoice = args.progress.clone().into();
     let progress_reporter = create_progress_reporter(progress_choice);
@@ -423,18 +397,18 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
 
     // Handle --dry-run: show what would be checked without actually running
     if args.dry_run {
-        let list_result = runner.list_packages(&args.workspace_root, &config)?;
+        let list_result = runner.list_packages(&args.workspace_root, &cfg)?;
         print_list_text(&list_result);
         return Ok(0);
     }
 
     let started = OffsetDateTime::now_utc();
-    let artifacts = match runner.run(&args.workspace_root, &config) {
+    let artifacts = match runner.run(&args.workspace_root, &cfg) {
         Ok(artifacts) => artifacts,
         Err(e) => {
             return handle_tool_error(
                 anyhow::Error::new(e),
-                &config,
+                &cfg,
                 &args.workspace_root,
                 &artifacts_root,
                 receipt_requested,
@@ -465,26 +439,26 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
             sarif_requested,
         );
 
-        // Build capability context based on the run configuration
-        let capability_ctx = build_capability_context(&config, &report);
+        // Build capability context using probed git results
+        let capability_ctx = build_capability_context(&cfg, &report, git_available, shallow_clone);
 
         let receipt = build_receipt_with_capabilities(
             Some(&report),
             &[],
             &artifact_index,
-            &config.baseline,
+            &cfg.baseline,
             &args.workspace_root,
             Some(&capability_ctx),
         );
 
         // In cockpit mode, exit 0 if receipt write succeeds (even with failures)
-        if config.mode.is_cockpit() {
+        if cfg.mode.is_cockpit() {
             match write_receipt_bundle(
                 &artifacts_root,
                 &receipt,
                 Some(&report),
                 sarif_requested,
-                config.output.pretty_json,
+                cfg.output.pretty_json,
             ) {
                 Ok(()) => return Ok(0),
                 Err(e) => {
@@ -499,24 +473,24 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
             &receipt,
             Some(&report),
             sarif_requested,
-            config.output.pretty_json,
+            cfg.output.pretty_json,
         )?;
         let code = exit_code_from_receipt(
             &receipt.verdict,
-            config.output.warn_as_fail,
+            cfg.output.warn_as_fail,
             has_tool_error(&receipt.findings),
         );
         return Ok(code);
     }
 
     // Resolve the run mode (auto-detect from environment if needed)
-    let resolved_mode = config.mode.resolve();
+    let resolved_mode = cfg.mode.resolve();
 
-    emit_outputs(&config, &report)?;
+    emit_outputs(&cfg, &report)?;
     Ok(exit_code_from_report(
         &report,
         resolved_mode,
-        config.output.warn_as_fail,
+        cfg.output.warn_as_fail,
     ))
 }
 
@@ -582,86 +556,6 @@ fn handle_tool_error(
         has_tool_error(&receipt.findings),
     );
     Ok(code)
-}
-
-/// Build capability context for receipt generation.
-///
-/// Determines capability status based on configuration and run results.
-fn build_capability_context(config: &SemverguardConfig, report: &RunReport) -> CapabilityContext {
-    // Git is available if we used git baseline mode
-    let git_available = matches!(config.baseline.kind, BaselineKind::Git);
-    let git_detail = if git_available {
-        config.baseline.rev.clone()
-    } else {
-        None
-    };
-
-    // Baseline is available if we didn't have any baseline errors
-    let baseline_available = !report.packages.iter().any(|p| {
-        p.status == PackageStatus::Failed
-            && p.failure_kind == Some(FailureKind::BaselineError)
-    });
-    let baseline_detail = if baseline_available {
-        match config.baseline.kind {
-            BaselineKind::Git => config.baseline.rev.clone().map(|r| format!("git:{r}")),
-            BaselineKind::CratesIo => {
-                config.baseline.version.clone().map(|v| format!("crates-io:{v}"))
-            }
-        }
-    } else {
-        Some("baseline resolution failed".to_string())
-    };
-
-    let mut ctx = CapabilityContext::new()
-        .with_git_available(git_available)
-        .with_baseline_available(baseline_available);
-
-    if let Some(detail) = git_detail {
-        ctx = ctx.with_git_detail(detail);
-    }
-    if let Some(detail) = baseline_detail {
-        ctx = ctx.with_baseline_detail(detail);
-    }
-
-    ctx
-}
-
-fn exit_code_from_report(
-    report: &RunReport,
-    resolved_mode: RunMode,
-    warn_as_fail: bool,
-) -> i32 {
-    let mut has_tool_error_flag = false;
-    let mut has_semver_violation = false;
-    let mut has_baseline_error = false;
-
-    for pkg in &report.packages {
-        if pkg.status != PackageStatus::Failed {
-            continue;
-        }
-        match pkg.failure_kind.unwrap_or(FailureKind::Unknown) {
-            FailureKind::ToolError => has_tool_error_flag = true,
-            FailureKind::BaselineError => has_baseline_error = true,
-            FailureKind::SemverViolation | FailureKind::Unknown => has_semver_violation = true,
-        }
-    }
-
-    if has_tool_error_flag {
-        1
-    } else if has_semver_violation {
-        2
-    } else if has_baseline_error {
-        // In Pr mode, baseline errors are warnings (exit 0 unless warn_as_fail is set)
-        // In Release mode, baseline errors are failures (exit 3)
-        let baseline_errors_are_warnings = resolved_mode.baseline_errors_are_warnings();
-        if baseline_errors_are_warnings && !warn_as_fail {
-            0
-        } else {
-            3
-        }
-    } else {
-        0
-    }
 }
 
 fn emit_outputs(cfg: &SemverguardConfig, report: &RunReport) -> Result<()> {
@@ -812,8 +706,8 @@ fn run_validate_config(args: &ValidateConfigArgs) -> Result<()> {
         return Ok(());
     }
 
-    let config = load_config(&cfg_path)?;
-    let result = validate_config(&config);
+    let cfg = config::load_config(&cfg_path)?;
+    let result = validate_config(&cfg);
 
     if result.errors.is_empty() && result.warnings.is_empty() {
         println!("Configuration is valid: {}", cfg_path.display());
@@ -962,16 +856,16 @@ fn run_list(args: &ListArgs) -> Result<()> {
         .config
         .clone()
         .unwrap_or_else(|| PathBuf::from("semverguard.toml"));
-    ensure_workspace_root(&args.workspace_root)?;
-    let mut config = load_config(&cfg_path)?;
+    config::ensure_workspace_root(&args.workspace_root)?;
+    let mut cfg = config::load_config(&cfg_path)?;
 
     // Apply CLI overrides for list command
     if args.changed {
-        config.scope.mode = semverguard_types::ScopeMode::Changed;
+        cfg.scope.mode = semverguard_types::ScopeMode::Changed;
     }
     if let Some(rev) = &args.baseline_rev {
-        config.baseline.kind = semverguard_types::BaselineKind::Git;
-        config.baseline.rev = Some(rev.clone());
+        cfg.baseline.kind = semverguard_types::BaselineKind::Git;
+        cfg.baseline.rev = Some(rev.clone());
     }
 
     // Wire adapters (we don't need engine for list)
@@ -980,7 +874,7 @@ fn run_list(args: &ListArgs) -> Result<()> {
     let engine = CargoSemverChecksEngine::default();
 
     let runner = SemverguardRunner::new(&workspace, Some(&git), &engine);
-    let list_result = runner.list_packages(&args.workspace_root, &config)?;
+    let list_result = runner.list_packages(&args.workspace_root, &cfg)?;
 
     if args.json {
         let json = serde_json::to_string_pretty(&list_result)?;

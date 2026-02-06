@@ -174,6 +174,7 @@ mod tests {
                 sarif_json: None,
                 raw_logs: vec![],
             },
+            truncation: None,
         }
     }
 
@@ -234,10 +235,6 @@ mod tests {
         }
     }
 
-    // =========================================================================
-    // Empty/All-passed scenarios
-    // =========================================================================
-
     #[test]
     fn test_empty_findings_all_passed() {
         let packages = vec![
@@ -268,13 +265,9 @@ mod tests {
         assert!(comment.contains("(no report available)"));
     }
 
-    // =========================================================================
-    // Long package names
-    // =========================================================================
-
     #[test]
     fn test_very_long_package_name() {
-        let long_name = "a".repeat(150); // Very long package name
+        let long_name = "a".repeat(150);
         let packages = vec![make_package(&long_name, "1.0.0", PackageStatus::Failed)];
         let mut receipt = minimal_receipt();
         receipt.verdict.status = VerdictStatus::Fail;
@@ -284,18 +277,12 @@ mod tests {
 
         let comment = render_comment(&receipt);
 
-        // Should contain the full long name
         assert!(comment.contains(&long_name));
         assert!(comment.contains("## Semverguard: fail"));
     }
 
-    // =========================================================================
-    // Markdown special characters
-    // =========================================================================
-
     #[test]
     fn test_markdown_special_characters_in_package_name() {
-        // Package names with special markdown characters
         let packages = vec![
             make_package("my_lib-core", "1.0.0", PackageStatus::Failed),
             make_package("pkg-with-dashes", "1.0.0", PackageStatus::Skipped),
@@ -310,10 +297,6 @@ mod tests {
         assert!(comment.contains("my_lib-core"));
         assert!(comment.contains("pkg-with-dashes"));
     }
-
-    // =========================================================================
-    // Unicode in messages
-    // =========================================================================
 
     #[test]
     fn test_unicode_in_skip_reason() {
@@ -349,10 +332,6 @@ mod tests {
         assert!(comment.contains("警告: 需要版本升级"));
     }
 
-    // =========================================================================
-    // All packages skipped
-    // =========================================================================
-
     #[test]
     fn test_all_packages_skipped() {
         let packages = vec![
@@ -375,10 +354,6 @@ mod tests {
         assert!(comment.contains("lib-b"));
         assert!(comment.contains("lib-c"));
     }
-
-    // =========================================================================
-    // Mixed status packages
-    // =========================================================================
 
     #[test]
     fn test_mixed_status_packages() {
@@ -404,10 +379,6 @@ mod tests {
         assert!(comment.contains("lib-c 0.1.0"));
     }
 
-    // =========================================================================
-    // Raw log lookup
-    // =========================================================================
-
     #[test]
     fn test_raw_logs_included_in_failed_packages() {
         let packages = vec![make_package("lib-a", "1.0.0", PackageStatus::Failed)];
@@ -427,10 +398,6 @@ mod tests {
 
         assert!(comment.contains("(log: logs/lib-a.stderr.log)"));
     }
-
-    // =========================================================================
-    // Warnings section
-    // =========================================================================
 
     #[test]
     fn test_warnings_in_comment() {
@@ -478,13 +445,8 @@ mod tests {
 
         let comment = render_comment(&receipt);
 
-        // Info level should not appear in warnings section
         assert!(!comment.contains("This is just informational"));
     }
-
-    // =========================================================================
-    // Verdict status rendering
-    // =========================================================================
 
     #[test]
     fn test_verdict_pass() {
@@ -516,10 +478,6 @@ mod tests {
         let comment = render_comment(&receipt);
         assert!(comment.contains("## Semverguard: skip"));
     }
-
-    // =========================================================================
-    // Sorting behavior
-    // =========================================================================
 
     #[test]
     fn test_packages_sorted_alphabetically() {

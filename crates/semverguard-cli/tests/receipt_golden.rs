@@ -1,4 +1,4 @@
-use semverguard_cli::{
+use semverguard_core::{
     comment,
     receipt::{build_artifact_index, build_receipt},
     sarif,
@@ -141,9 +141,11 @@ fn test_receipt_golden_files_and_schema() {
     let schema_str = fs::read_to_string(schema_path).expect("schema should exist");
     let schema_json: serde_json::Value =
         serde_json::from_str(&schema_str).expect("schema should be valid JSON");
-    let compiled = jsonschema::JSONSchema::compile(&schema_json).expect("schema should compile");
+    let validator = jsonschema::validator_for(&schema_json).expect("schema should compile");
 
     let value = serde_json::to_value(&receipt).expect("receipt should be JSON value");
-    let result = compiled.validate(&value);
-    assert!(result.is_ok(), "receipt should validate against schema");
+    assert!(
+        validator.is_valid(&value),
+        "receipt should validate against schema"
+    );
 }

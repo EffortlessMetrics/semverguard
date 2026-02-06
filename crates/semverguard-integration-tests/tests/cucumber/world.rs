@@ -10,8 +10,8 @@ use semverguard_domain::{
     SemverguardRunner,
 };
 use semverguard_types::{
-    ListResult, ScopeConfig, ScopeMode,
-    SemverCheckOutput, SemverguardConfig, WorkspaceMetadata, WorkspacePackage,
+    ListResult, ScopeConfig, ScopeMode, SemverCheckOutput, SemverguardConfig, WorkspaceMetadata,
+    WorkspacePackage,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

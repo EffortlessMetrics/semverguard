@@ -18,17 +18,16 @@
 //! git changes, and semver check results without requiring actual Cargo projects.
 
 use semver::Version;
-use semverguard_cli::receipt::{
-    build_artifact_index, build_receipt, exit_code_from_receipt, has_tool_error,
-    write_receipt_bundle, ToolErrorFinding,
+use semverguard_core::receipt::{
+    ToolErrorFinding, build_artifact_index, build_receipt, exit_code_from_receipt, has_tool_error,
+    write_receipt_bundle,
 };
 use semverguard_domain::{
     MockGitProvider, MockSemverEngine, MockWorkspaceProvider, SemverguardRunner,
 };
 use semverguard_types::{
     BaselineConfig, BaselineKind, PackageStatus, RunReport, ScopeConfig, ScopeMode,
-    SemverCheckOutput, SemverguardConfig, WorkspaceMetadata,
-    WorkspacePackage,
+    SemverCheckOutput, SemverguardConfig, WorkspaceMetadata, WorkspacePackage,
 };
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -248,12 +247,14 @@ fn scenario_workspace_check_captures_mixed_results() {
 
     assert_eq!(passing.status, PackageStatus::Passed);
     assert_eq!(failing.status, PackageStatus::Failed);
-    assert!(failing
-        .engine
-        .as_ref()
-        .unwrap()
-        .stderr
-        .contains("Breaking change"));
+    assert!(
+        failing
+            .engine
+            .as_ref()
+            .unwrap()
+            .stderr
+            .contains("Breaking change")
+    );
 }
 
 // =============================================================================
@@ -888,10 +889,12 @@ fn scenario_json_report_package_details() {
     let pkg = &parsed["packages"][0];
     assert_eq!(pkg["name"], "detailed-lib");
     assert_eq!(pkg["version"], "1.2.3");
-    assert!(pkg["manifest_path"]
-        .as_str()
-        .unwrap()
-        .contains("detailed-lib"));
+    assert!(
+        pkg["manifest_path"]
+            .as_str()
+            .unwrap()
+            .contains("detailed-lib")
+    );
     assert_eq!(pkg["status"], "passed");
     assert!(pkg["skip_reason"].is_null());
     assert!(pkg["duration_ms"].is_number());

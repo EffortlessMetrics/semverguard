@@ -210,7 +210,10 @@ impl std::fmt::Display for BaselineErrorCause {
                 }
                 Ok(())
             }
-            Self::NotPublished { crate_name, version } => {
+            Self::NotPublished {
+                crate_name,
+                version,
+            } => {
                 write!(f, "crate '{}' not published to crates.io", crate_name)?;
                 if let Some(v) = version {
                     write!(f, " (version {})", v)?;
@@ -831,10 +834,7 @@ mod tests {
         let cause = BaselineErrorCause::RevisionNotFound {
             rev: "origin/missing".to_string(),
         };
-        assert_eq!(
-            cause.to_string(),
-            "git revision 'origin/missing' not found"
-        );
+        assert_eq!(cause.to_string(), "git revision 'origin/missing' not found");
         assert!(!cause.is_expected());
         assert!(!cause.is_ci_recoverable());
     }
@@ -947,9 +947,7 @@ mod tests {
                 base: "main".to_string(),
                 head: "HEAD".to_string(),
             },
-            BaselineErrorCause::RustdocGenerationFailed {
-                detail: None,
-            },
+            BaselineErrorCause::RustdocGenerationFailed { detail: None },
             BaselineErrorCause::NotPublished {
                 crate_name: "my-crate".to_string(),
                 version: Some("2.0.0".to_string()),

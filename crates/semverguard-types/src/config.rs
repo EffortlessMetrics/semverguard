@@ -596,7 +596,12 @@ mod tests {
 
     #[test]
     fn test_run_mode_json_roundtrip() {
-        for mode in [RunMode::Auto, RunMode::Pr, RunMode::Release, RunMode::Cockpit] {
+        for mode in [
+            RunMode::Auto,
+            RunMode::Pr,
+            RunMode::Release,
+            RunMode::Cockpit,
+        ] {
             let json = serde_json::to_string(&mode).unwrap();
             let deserialized: RunMode = serde_json::from_str(&json).unwrap();
             assert_eq!(mode, deserialized);

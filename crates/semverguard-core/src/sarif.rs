@@ -27,8 +27,7 @@ use serde::Serialize;
 use std::path::Path;
 
 /// SARIF 2.1.0 schema version.
-const SARIF_SCHEMA: &str =
-    "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json";
+const SARIF_SCHEMA: &str = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json";
 const SARIF_VERSION: &str = "2.1.0";
 
 /// SARIF log containing all analysis results.
@@ -629,16 +628,26 @@ fn finding_to_sarif_result(finding: &Finding) -> SarifResult {
     };
 
     // Extract additional properties for debugging
-    let properties = finding.data.as_ref().map(|data| {
-        SarifResultProperties {
-            package_name: data.get("package").and_then(|v| v.as_str()).map(String::from),
-            package_version: data.get("version").and_then(|v| v.as_str()).map(String::from),
-            required_bump: data.get("required_bump").and_then(|v| v.as_str()).map(String::from),
-            duration_ms: None,
-            raw_stderr_log: raw_log_ref.map(String::from),
-            raw_stdout_log: None,
-            failure_kind: data.get("failure_kind").and_then(|v| v.as_str()).map(String::from),
-        }
+    let properties = finding.data.as_ref().map(|data| SarifResultProperties {
+        package_name: data
+            .get("package")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        package_version: data
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        required_bump: data
+            .get("required_bump")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        duration_ms: None,
+        raw_stderr_log: raw_log_ref.map(String::from),
+        raw_stdout_log: None,
+        failure_kind: data
+            .get("failure_kind")
+            .and_then(|v| v.as_str())
+            .map(String::from),
     });
 
     SarifResult {
@@ -858,10 +867,7 @@ mod tests {
         assert_eq!(props.required_bump, Some("Major".to_string()));
         assert_eq!(props.duration_ms, Some(500));
         // Verify failure_kind is included in properties
-        assert_eq!(
-            props.failure_kind,
-            Some("semver-violation".to_string())
-        );
+        assert_eq!(props.failure_kind, Some("semver-violation".to_string()));
     }
 
     #[test]
@@ -913,9 +919,15 @@ mod tests {
 
     #[test]
     fn test_failure_kind_str() {
-        assert_eq!(failure_kind_str(FailureKind::SemverViolation), "semver-violation");
+        assert_eq!(
+            failure_kind_str(FailureKind::SemverViolation),
+            "semver-violation"
+        );
         assert_eq!(failure_kind_str(FailureKind::ToolError), "tool-error");
-        assert_eq!(failure_kind_str(FailureKind::BaselineError), "baseline-error");
+        assert_eq!(
+            failure_kind_str(FailureKind::BaselineError),
+            "baseline-error"
+        );
         assert_eq!(failure_kind_str(FailureKind::Unknown), "unknown");
     }
 

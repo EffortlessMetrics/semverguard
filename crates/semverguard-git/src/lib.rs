@@ -58,6 +58,17 @@ impl GitCli {
 
         Ok(String::from_utf8(output.stdout)?)
     }
+
+    /// Check if git is available.
+    pub fn is_available(&self, workspace_root: &Path) -> bool {
+        self.run_git(workspace_root, &["--version"]).is_ok()
+    }
+
+    /// Check if the repo is a shallow clone.
+    pub fn is_shallow(&self, workspace_root: &Path) -> Result<bool> {
+        let output = self.run_git(workspace_root, &["rev-parse", "--is-shallow-repository"])?;
+        Ok(output.trim() == "true")
+    }
 }
 
 impl Default for GitCli {

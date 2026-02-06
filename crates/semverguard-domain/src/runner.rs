@@ -1,6 +1,4 @@
-use crate::classification::{
-    classify_engine_error_detailed, classify_output_detailed,
-};
+use crate::classification::{classify_engine_error_detailed, classify_output_detailed};
 use crate::error::{Result, SemverguardError};
 use crate::ports::{GitProvider, SemverEngine, WorkspaceProvider};
 use crate::progress::{NoopProgressCallback, ProgressCallback, ProgressEvent};
@@ -267,8 +265,7 @@ impl<'a> SemverguardRunner<'a> {
                         duration_ms,
                     });
 
-                    let classification =
-                        classify_engine_error_detailed(&e, Some(&pkg.name));
+                    let classification = classify_engine_error_detailed(&e, Some(&pkg.name));
 
                     reports.push(PackageReport {
                         name: pkg.name.clone(),
@@ -566,8 +563,7 @@ mod tests {
     use semver::Version;
     use semverguard_types::{
         BaselineKind, FailureKind, RequiredBump, ScopeConfig, ScopeMode, SemverCheckOutput,
-        SemverguardConfig,
-        WorkspaceMetadata, WorkspacePackage,
+        SemverguardConfig, WorkspaceMetadata, WorkspacePackage,
     };
     use std::cell::RefCell;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1123,11 +1119,13 @@ mod tests {
             .find(|p| p.name == "lib-internal")
             .unwrap();
         assert_eq!(skipped.status, PackageStatus::Skipped);
-        assert!(skipped
-            .skip_reason
-            .as_ref()
-            .unwrap()
-            .contains("publish = false"));
+        assert!(
+            skipped
+                .skip_reason
+                .as_ref()
+                .unwrap()
+                .contains("publish = false")
+        );
     }
 
     #[test]
@@ -1191,11 +1189,13 @@ mod tests {
             .find(|p| p.name == "bin-crate")
             .unwrap();
         assert_eq!(skipped.status, PackageStatus::Skipped);
-        assert!(skipped
-            .skip_reason
-            .as_ref()
-            .unwrap()
-            .contains("no library target"));
+        assert!(
+            skipped
+                .skip_reason
+                .as_ref()
+                .unwrap()
+                .contains("no library target")
+        );
     }
 
     #[test]
@@ -1280,11 +1280,13 @@ mod tests {
 
         // Verify the error message is captured
         let failed = &result.packages[0];
-        assert!(failed
-            .skip_reason
-            .as_ref()
-            .unwrap()
-            .contains("engine invocation failed"));
+        assert!(
+            failed
+                .skip_reason
+                .as_ref()
+                .unwrap()
+                .contains("engine invocation failed")
+        );
     }
 
     #[test]
@@ -1370,11 +1372,13 @@ mod tests {
         assert_eq!(result.packages.len(), 1);
         assert_eq!(result.packages[0].status, PackageStatus::Skipped);
         // First matching filter wins (publish = false)
-        assert!(result.packages[0]
-            .skip_reason
-            .as_ref()
-            .unwrap()
-            .contains("publish = false"));
+        assert!(
+            result.packages[0]
+                .skip_reason
+                .as_ref()
+                .unwrap()
+                .contains("publish = false")
+        );
     }
 
     // =========================================================================
@@ -2301,11 +2305,7 @@ mod tests {
         assert_eq!(engine.call_count(), 3);
 
         // Verify the failed package has actionable error message
-        let failed = result
-            .packages
-            .iter()
-            .find(|p| p.name == "pkg-b")
-            .unwrap();
+        let failed = result.packages.iter().find(|p| p.name == "pkg-b").unwrap();
         assert_eq!(failed.status, PackageStatus::Failed);
         assert!(failed.skip_reason.is_some());
         let reason = failed.skip_reason.as_ref().unwrap();

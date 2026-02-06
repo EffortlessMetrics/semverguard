@@ -1471,10 +1471,10 @@ Major version bump required.
             default_features: false,
             only_explicit_features: false,
             features: vec![
-                "feature/name".to_string(),  // forward slash
-                "feature.name".to_string(),  // dot
-                "feature:name".to_string(),  // colon
-                "feature+name".to_string(),  // plus
+                "feature/name".to_string(), // forward slash
+                "feature.name".to_string(), // dot
+                "feature:name".to_string(), // colon
+                "feature+name".to_string(), // plus
             ],
             baseline_features: vec![],
             current_features: vec![],

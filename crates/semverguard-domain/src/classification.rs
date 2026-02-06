@@ -137,7 +137,9 @@ fn detect_baseline_error_from_message(
         && (hay.contains("not found") || hay.contains("does not exist") || hay.contains("missing"))
         && hay.contains("baseline")
     {
-        let name = crate_name.map(String::from).unwrap_or_else(|| "unknown".to_string());
+        let name = crate_name
+            .map(String::from)
+            .unwrap_or_else(|| "unknown".to_string());
         return Some(BaselineErrorCause::CrateAbsentFromBaseline { crate_name: name });
     }
 
@@ -160,7 +162,9 @@ fn detect_baseline_error_from_message(
         || hay.contains("registry")
         || (hay.contains("not published") || hay.contains("never published"))
     {
-        let name = crate_name.map(String::from).unwrap_or_else(|| "unknown".to_string());
+        let name = crate_name
+            .map(String::from)
+            .unwrap_or_else(|| "unknown".to_string());
         return Some(BaselineErrorCause::NotPublished {
             crate_name: name,
             version: None,
@@ -386,7 +390,12 @@ mod tests {
 
     #[test]
     fn test_classify_detailed_generic_baseline_error() {
-        let out = output(Some(2), "", "error: baseline failed for unknown reason", None);
+        let out = output(
+            Some(2),
+            "",
+            "error: baseline failed for unknown reason",
+            None,
+        );
         let result = classify_output_detailed(&out, None);
         assert_eq!(result.kind, FailureKind::BaselineError);
         assert!(matches!(

@@ -36,6 +36,15 @@ pub struct RunCapabilities {
     pub baseline: CapabilityInfo,
 }
 
+/// Truncation information when findings exceed the limit.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TruncationInfo {
+    /// Number of findings before truncation.
+    pub original_count: usize,
+    /// Maximum number of findings retained.
+    pub limit: usize,
+}
+
 /// Sensor report envelope for cockpit ingestion (v1).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SensorReportV1 {
@@ -54,6 +63,9 @@ pub struct SensorReportV1 {
     pub data: Option<SemverguardData>,
     /// Artifact index for the run.
     pub artifacts: ArtifactIndex,
+    /// Truncation info when findings were capped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncation: Option<TruncationInfo>,
 }
 
 /// Tool information for the receipt.
@@ -263,6 +275,7 @@ mod tests {
                 sarif_json: None,
                 raw_logs: vec![],
             },
+            truncation: None,
         };
 
         let json = serde_json::to_string(&receipt).unwrap();
@@ -310,14 +323,13 @@ mod tests {
 
     #[test]
     fn test_receipt_schema_validation() {
-        use jsonschema::JSONSchema;
         use std::fs;
 
         let schema_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../docs/schema/sensor.report.v1.json");
         let schema_str = fs::read_to_string(schema_path).unwrap();
         let schema_json: serde_json::Value = serde_json::from_str(&schema_str).unwrap();
-        let compiled = JSONSchema::compile(&schema_json).unwrap();
+        let validator = jsonschema::validator_for(&schema_json).unwrap();
 
         let report = sample_report();
         let receipt = SensorReportV1 {
@@ -347,10 +359,13 @@ mod tests {
                 sarif_json: None,
                 raw_logs: vec![],
             },
+            truncation: None,
         };
 
         let value = serde_json::to_value(receipt).unwrap();
-        let result = compiled.validate(&value);
-        assert!(result.is_ok(), "receipt should validate against schema");
+        assert!(
+            validator.is_valid(&value),
+            "receipt should validate against schema"
+        );
     }
 }

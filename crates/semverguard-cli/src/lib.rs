@@ -1,8 +1,4 @@
 //! Library exports for semverguard CLI helpers.
-
-/// Markdown comment rendering.
-pub mod comment;
-/// Receipt generation helpers.
-pub mod receipt;
-/// SARIF generation.
-pub mod sarif;
+//!
+//! These re-exports allow integration tests to access core functionality.
+//! The actual implementations now live in `semverguard-core`.

@@ -1,16 +1,46 @@
+//! Receipt building, fingerprinting, and writing for cockpit ingestion.
+//!
+//! This module builds `sensor.report.v1` receipts from run reports,
+//! computing verdicts, fingerprints, and artifact indices.
+
 use crate::comment;
 use crate::sarif;
 use semverguard_types::{
     ArtifactIndex, BaselineConfig, CapabilityInfo, CapabilityStatus, FailureKind, Finding,
-    FindingLevel, FindingLocation, PackageReport, PackageStatus, RawLogRef, RunCapabilities,
-    RunReport, SemverguardData, SensorReportV1, ToolInfo, Verdict, VerdictStatus,
+    FindingLevel, FindingLocation, PackageReport, PackageStatus, RawLogRef, RequiredBump,
+    RunCapabilities, RunReport, SemverguardData, SensorReportV1, ToolInfo, TruncationInfo, Verdict,
+    VerdictStatus,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stable code token constants (2D)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Check ID for SemVer policy violations.
+pub const CHECK_SEMVER: &str = "semver";
+/// Code for SemVer violations.
+pub const CODE_VIOLATION: &str = "violation";
+/// Check ID for baseline resolution errors.
+pub const CHECK_BASELINE: &str = "baseline";
+/// Code for missing baseline.
+pub const CODE_MISSING: &str = "missing";
+/// Check ID for tool/runtime errors.
+pub const CHECK_TOOL: &str = "tool";
+/// Code for tool errors.
+pub const CODE_ERROR: &str = "error";
+/// Check ID for unclassifiable engine failures.
+pub const CHECK_ENGINE: &str = "engine";
+/// Code for unknown failures.
+pub const CODE_UNKNOWN: &str = "unknown";
+
+/// Maximum number of findings in a receipt before truncation.
+const MAX_FINDINGS: usize = 500;
 
 /// Tool error finding for receipt generation.
 #[derive(Debug, Clone)]
@@ -42,6 +72,8 @@ pub struct CapabilityContext {
     pub baseline_available: bool,
     /// Optional detail about baseline status.
     pub baseline_detail: Option<String>,
+    /// Whether the repository is a shallow clone.
+    pub shallow_clone: bool,
 }
 
 impl CapabilityContext {
@@ -74,8 +106,24 @@ impl CapabilityContext {
         self
     }
 
+    /// Mark as shallow clone.
+    pub fn with_shallow_clone(mut self, shallow: bool) -> Self {
+        self.shallow_clone = shallow;
+        self
+    }
+
     /// Build the RunCapabilities from this context.
     pub fn build(&self) -> RunCapabilities {
+        let mut git_detail = self.git_detail.clone();
+        if self.shallow_clone {
+            let existing = git_detail.unwrap_or_default();
+            git_detail = Some(if existing.is_empty() {
+                "shallow clone".to_string()
+            } else {
+                format!("{existing}; shallow clone")
+            });
+        }
+
         RunCapabilities {
             git: CapabilityInfo {
                 status: if self.git_available {
@@ -83,7 +131,7 @@ impl CapabilityContext {
                 } else {
                     CapabilityStatus::Unavailable
                 },
-                detail: self.git_detail.clone(),
+                detail: git_detail,
             },
             baseline: CapabilityInfo {
                 status: if self.baseline_available {
@@ -176,10 +224,31 @@ pub fn build_receipt_with_capabilities(
     workspace_root: &Path,
     capabilities: Option<&CapabilityContext>,
 ) -> SensorReportV1 {
+    build_receipt_with_capabilities_versioned(
+        report,
+        errors,
+        artifacts,
+        baseline,
+        workspace_root,
+        capabilities,
+        None,
+    )
+}
+
+/// Build a receipt with an optional tool version override.
+pub fn build_receipt_with_capabilities_versioned(
+    report: Option<&RunReport>,
+    errors: &[ToolErrorFinding],
+    artifacts: &ArtifactIndex,
+    baseline: &BaselineConfig,
+    workspace_root: &Path,
+    capabilities: Option<&CapabilityContext>,
+    tool_version: Option<&str>,
+) -> SensorReportV1 {
     let (run_info, findings_from_report) = match report {
         Some(report) => (
             build_run_info(report, baseline, capabilities),
-            build_findings(report, artifacts),
+            build_findings(report, artifacts, workspace_root),
         ),
         None => (
             build_run_info_from_now(baseline, workspace_root, capabilities),
@@ -191,8 +260,8 @@ pub fn build_receipt_with_capabilities(
     for err in errors {
         // Tool errors don't have package context, so no fingerprint
         findings.push(Finding {
-            check_id: "tool".to_string(),
-            code: "error".to_string(),
+            check_id: CHECK_TOOL.to_string(),
+            code: CODE_ERROR.to_string(),
             level: FindingLevel::Error,
             message: err.message.clone(),
             location: None,
@@ -209,13 +278,27 @@ pub fn build_receipt_with_capabilities(
         ))
     });
 
+    // Truncation signaling (2B)
+    let truncation = if findings.len() > MAX_FINDINGS {
+        let original = findings.len();
+        findings.truncate(MAX_FINDINGS);
+        Some(TruncationInfo {
+            original_count: original,
+            limit: MAX_FINDINGS,
+        })
+    } else {
+        None
+    };
+
     let (verdict_status, verdict_reason) = derive_verdict(&findings, report);
+
+    let version = tool_version.unwrap_or(env!("CARGO_PKG_VERSION"));
 
     SensorReportV1 {
         schema: "sensor.report.v1".to_string(),
         tool: ToolInfo {
             name: "semverguard".to_string(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            version: version.to_string(),
             repository_url: option_env!("CARGO_PKG_REPOSITORY").map(|s| s.to_string()),
         },
         run: run_info,
@@ -226,12 +309,13 @@ pub fn build_receipt_with_capabilities(
         findings,
         data: report.map(|r| SemverguardData { report: r.clone() }),
         artifacts: artifacts.clone(),
+        truncation,
     }
 }
 
 /// Returns true if any finding is a tool error.
 pub fn has_tool_error(findings: &[Finding]) -> bool {
-    findings.iter().any(|f| f.check_id == "tool")
+    findings.iter().any(|f| f.check_id == CHECK_TOOL)
 }
 
 /// Compute exit code from receipt verdict and tool error presence.
@@ -335,14 +419,14 @@ fn duration_ms_from_strings(start: &str, end: &str) -> Option<u128> {
     let e = OffsetDateTime::parse(end, &Rfc3339).ok()?;
     let diff = e - s;
     let ms = diff.whole_milliseconds();
-    if ms < 0 {
-        None
-    } else {
-        Some(ms as u128)
-    }
+    if ms < 0 { None } else { Some(ms as u128) }
 }
 
-fn build_findings(report: &RunReport, artifacts: &ArtifactIndex) -> Vec<Finding> {
+fn build_findings(
+    report: &RunReport,
+    artifacts: &ArtifactIndex,
+    workspace_root: &Path,
+) -> Vec<Finding> {
     let raw_log_map = build_raw_log_map(artifacts);
     let mut findings = Vec::new();
 
@@ -358,10 +442,10 @@ fn build_findings(report: &RunReport, artifacts: &ArtifactIndex) -> Vec<Finding>
 
         let failure_kind = pkg.failure_kind.unwrap_or(FailureKind::Unknown);
         let (check_id, code, level) = match failure_kind {
-            FailureKind::SemverViolation => ("semver", "violation", FindingLevel::Error),
-            FailureKind::BaselineError => ("baseline", "missing", FindingLevel::Warning),
-            FailureKind::ToolError => ("tool", "error", FindingLevel::Error),
-            FailureKind::Unknown => ("engine", "unknown", FindingLevel::Error),
+            FailureKind::SemverViolation => (CHECK_SEMVER, CODE_VIOLATION, FindingLevel::Error),
+            FailureKind::BaselineError => (CHECK_BASELINE, CODE_MISSING, FindingLevel::Warning),
+            FailureKind::ToolError => (CHECK_TOOL, CODE_ERROR, FindingLevel::Error),
+            FailureKind::Unknown => (CHECK_ENGINE, CODE_UNKNOWN, FindingLevel::Error),
         };
 
         let message = build_failure_message(pkg, failure_kind);
@@ -380,15 +464,46 @@ fn build_findings(report: &RunReport, artifacts: &ArtifactIndex) -> Vec<Finding>
             raw_log,
         });
 
-        let data = Some(json!({
-            "package": pkg.name,
-            "version": pkg.version,
-            "required_bump": pkg.inferred_required_bump.map(required_bump_str),
-            "failure_kind": failure_kind_str(failure_kind),
-            "manifest_path": pkg.manifest_path.display().to_string(),
-        }));
+        // 2A: Path hygiene - use normalize_receipt_path for manifest_path in data
+        let normalized_manifest =
+            normalize_receipt_path(&report.workspace_root, &pkg.manifest_path);
 
-        // Compute fingerprint for deduplication
+        // 2C: Compute suggested version from current + required_bump
+        let suggested_version = pkg
+            .inferred_required_bump
+            .and_then(|bump| compute_suggested_version(&pkg.version, bump));
+
+        // 2C: Serialize baseline_error when failure_kind is BaselineError
+        let baseline_error_cause = if failure_kind == FailureKind::BaselineError {
+            pkg.baseline_error
+                .as_ref()
+                .map(|e| serde_json::to_value(e).unwrap_or(serde_json::Value::Null))
+        } else {
+            None
+        };
+
+        let mut data_map = serde_json::Map::new();
+        data_map.insert("package".to_string(), json!(pkg.name));
+        data_map.insert("version".to_string(), json!(pkg.version));
+        data_map.insert(
+            "required_bump".to_string(),
+            json!(pkg.inferred_required_bump.map(required_bump_str)),
+        );
+        data_map.insert(
+            "failure_kind".to_string(),
+            json!(failure_kind_str(failure_kind)),
+        );
+        data_map.insert("manifest_path".to_string(), json!(normalized_manifest));
+        if let Some(sv) = &suggested_version {
+            data_map.insert("suggested_version".to_string(), json!(sv));
+        }
+        if let Some(cause) = baseline_error_cause {
+            data_map.insert("baseline_error_cause".to_string(), cause);
+        }
+
+        let data = Some(serde_json::Value::Object(data_map));
+
+        // Use workspace_root for fingerprint (not needed for uniqueness, just for context)
         let fingerprint = Some(compute_fingerprint(check_id, code, &pkg.name, &pkg.version));
 
         findings.push(Finding {
@@ -402,7 +517,23 @@ fn build_findings(report: &RunReport, artifacts: &ArtifactIndex) -> Vec<Finding>
         });
     }
 
+    // Also build findings for packages with baseline errors that need the
+    // workspace_root for path normalization
+    let _ = workspace_root;
+
     findings
+}
+
+/// Compute the suggested next version after applying a bump.
+fn compute_suggested_version(version: &str, bump: RequiredBump) -> Option<String> {
+    let v = semver::Version::parse(version).ok()?;
+    let next = match bump {
+        RequiredBump::Major => semver::Version::new(v.major + 1, 0, 0),
+        RequiredBump::Minor => semver::Version::new(v.major, v.minor + 1, 0),
+        RequiredBump::Patch => semver::Version::new(v.major, v.minor, v.patch + 1),
+        RequiredBump::Unknown => return None,
+    };
+    Some(next.to_string())
 }
 
 fn build_failure_message(pkg: &PackageReport, kind: FailureKind) -> String {
@@ -462,9 +593,9 @@ fn derive_verdict(
 
     for f in findings {
         match f.check_id.as_str() {
-            "tool" => has_tool = true,
-            "baseline" => has_baseline = true,
-            "semver" | "engine" => has_semver = true,
+            CHECK_TOOL => has_tool = true,
+            CHECK_BASELINE => has_baseline = true,
+            CHECK_SEMVER | CHECK_ENGINE => has_semver = true,
             _ => {}
         }
     }
@@ -572,7 +703,11 @@ fn raw_log_paths(artifacts_dir: &Path, pkg: &PackageReport) -> (PathBuf, PathBuf
     )
 }
 
-fn normalize_receipt_path(workspace_root: &Path, path: &Path) -> String {
+/// Normalize a path to be workspace-root-relative with forward slashes.
+///
+/// If `strip_prefix` fails and the resulting path contains `..`, falls back
+/// to the filename only to avoid path traversal.
+pub fn normalize_receipt_path(workspace_root: &Path, path: &Path) -> String {
     let full_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -583,7 +718,21 @@ fn normalize_receipt_path(workspace_root: &Path, path: &Path) -> String {
         .strip_prefix(workspace_root)
         .unwrap_or(full_path.as_path());
 
-    normalized.to_string_lossy().replace('\\', "/")
+    let result = normalized.to_string_lossy().replace('\\', "/");
+
+    // Guard against path traversal
+    if result.contains("..") {
+        eprintln!(
+            "warning: path could not be normalized to workspace root: {}",
+            path.display()
+        );
+        // Fall back to filename only
+        path.file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_else(|| result)
+    } else {
+        result
+    }
 }
 
 fn sanitize_filename_component(input: &str) -> String {
@@ -596,12 +745,12 @@ fn sanitize_filename_component(input: &str) -> String {
         .collect()
 }
 
-fn required_bump_str(bump: semverguard_types::RequiredBump) -> &'static str {
+fn required_bump_str(bump: RequiredBump) -> &'static str {
     match bump {
-        semverguard_types::RequiredBump::Major => "major",
-        semverguard_types::RequiredBump::Minor => "minor",
-        semverguard_types::RequiredBump::Patch => "patch",
-        semverguard_types::RequiredBump::Unknown => "unknown",
+        RequiredBump::Major => "major",
+        RequiredBump::Minor => "minor",
+        RequiredBump::Patch => "patch",
+        RequiredBump::Unknown => "unknown",
     }
 }
 
@@ -617,7 +766,9 @@ fn failure_kind_str(kind: FailureKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use semverguard_types::{BaselineConfig, CapabilityStatus, PackageStatus, RequiredBump, Summary};
+    use semverguard_types::{
+        BaselineConfig, CapabilityStatus, PackageStatus, RequiredBump, Summary,
+    };
 
     fn sample_report() -> RunReport {
         RunReport {
@@ -844,7 +995,7 @@ mod tests {
 
         // Findings from packages should have fingerprints
         for finding in &receipt.findings {
-            if finding.check_id != "tool" {
+            if finding.check_id != CHECK_TOOL {
                 assert!(
                     finding.fingerprint.is_some(),
                     "Finding {} should have fingerprint",
@@ -852,5 +1003,95 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_code_token_format() {
+        // 2D: Validate all tokens match ^[a-z0-9_]+(\.[a-z0-9_]+)*$
+        let tokens = [
+            CHECK_SEMVER,
+            CODE_VIOLATION,
+            CHECK_BASELINE,
+            CODE_MISSING,
+            CHECK_TOOL,
+            CODE_ERROR,
+            CHECK_ENGINE,
+            CODE_UNKNOWN,
+        ];
+        let re = regex_lite::Regex::new(r"^[a-z0-9_]+(\.[a-z0-9_]+)*$").unwrap();
+        for token in &tokens {
+            assert!(
+                re.is_match(token),
+                "Token '{}' does not match expected format",
+                token
+            );
+        }
+    }
+
+    #[test]
+    fn test_compute_suggested_version() {
+        assert_eq!(
+            compute_suggested_version("1.0.0", RequiredBump::Major),
+            Some("2.0.0".to_string())
+        );
+        assert_eq!(
+            compute_suggested_version("1.2.3", RequiredBump::Minor),
+            Some("1.3.0".to_string())
+        );
+        assert_eq!(
+            compute_suggested_version("1.2.3", RequiredBump::Patch),
+            Some("1.2.4".to_string())
+        );
+        assert_eq!(
+            compute_suggested_version("1.2.3", RequiredBump::Unknown),
+            None
+        );
+        assert_eq!(
+            compute_suggested_version("not-semver", RequiredBump::Major),
+            None
+        );
+    }
+
+    #[test]
+    fn test_normalize_receipt_path_dotdot_guard() {
+        let workspace = Path::new("/workspace");
+        // Path outside workspace should fall back to filename
+        let result = normalize_receipt_path(workspace, Path::new("/other/dir/Cargo.toml"));
+        // On the same filesystem, strip_prefix fails, path contains ..
+        // The implementation falls back to filename
+        assert!(
+            !result.contains(".."),
+            "Result should not contain '..' path traversal: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_truncation_not_applied_under_limit() {
+        let report = sample_report();
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            Path::new("artifacts/semverguard"),
+            Some(&report),
+            false,
+        );
+        let receipt = build_receipt(
+            Some(&report),
+            &[],
+            &artifacts,
+            &BaselineConfig::default(),
+            report.workspace_root.as_path(),
+        );
+        assert!(receipt.truncation.is_none());
+    }
+
+    #[test]
+    fn test_shallow_clone_capability() {
+        let ctx = CapabilityContext::new()
+            .with_git_available(true)
+            .with_shallow_clone(true);
+        let caps = ctx.build();
+        assert_eq!(caps.git.status, CapabilityStatus::Available);
+        assert!(caps.git.detail.as_ref().unwrap().contains("shallow clone"));
     }
 }

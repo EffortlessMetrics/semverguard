@@ -18,10 +18,10 @@ test-utils = []
 
 [dependencies]
 semverguard-types = { version = "0.1.0", path = "../semverguard-types" }
-thiserror = "1"
-globset = "0.4"
-rayon = "1"
+thiserror = "2.0.18"
+globset = "0.4.18"
+rayon = "1.11.0"
 
 [dev-dependencies]
-semver = "1"
-serde_json = "1"
+semver = "1.0.27"
+serde_json = "1.0.149"

@@ -3,7 +3,7 @@
 //! These tests ensure that serialized outputs conform to their JSON schemas and
 //! that golden fixtures remain stable across changes.
 
-use jsonschema::JSONSchema;
+use jsonschema::Validator;
 use semverguard_types::{
     BaselineConfig, BaselineKind, FailureKind, ListResult, ListedPackage, PackageReport,
     PackageStatus, RequiredBump, RunReport, SemverCheckOutput, SkippedPackage, Summary,
@@ -24,13 +24,13 @@ fn golden_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/golden")
 }
 
-fn load_schema(name: &str) -> JSONSchema {
+fn load_schema(name: &str) -> Validator {
     let path = schema_dir().join(name);
     let schema_str = fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("Failed to read schema {}: {}", path.display(), e));
     let schema_json: Value = serde_json::from_str(&schema_str)
         .unwrap_or_else(|e| panic!("Failed to parse schema {}: {}", path.display(), e));
-    JSONSchema::compile(&schema_json)
+    jsonschema::validator_for(&schema_json)
         .unwrap_or_else(|e| panic!("Failed to compile schema {}: {}", path.display(), e))
 }
 
@@ -42,10 +42,12 @@ fn load_golden(name: &str) -> Value {
         .unwrap_or_else(|e| panic!("Failed to parse golden file {}: {}", path.display(), e))
 }
 
-fn validate_against_schema(schema: &JSONSchema, value: &Value, context: &str) {
-    let result = schema.validate(value);
-    if let Err(errors) = result {
-        let error_msgs: Vec<String> = errors.map(|e| format!("  - {}", e)).collect();
+fn validate_against_schema(schema: &Validator, value: &Value, context: &str) {
+    let error_msgs: Vec<String> = schema
+        .iter_errors(value)
+        .map(|e| format!("  - {}", e))
+        .collect();
+    if !error_msgs.is_empty() {
         panic!(
             "Schema validation failed for {}:\n{}",
             context,
@@ -333,6 +335,7 @@ fn test_receipt_pass_validates_against_schema() {
             sarif_json: None,
             raw_logs: vec![],
         },
+        truncation: None,
     };
 
     let value = serde_json::to_value(&receipt).expect("serialization should succeed");
@@ -399,6 +402,7 @@ fn test_receipt_fail_with_findings_validates_against_schema() {
                 stderr: Some("artifacts/semverguard/raw/lib-a-1.0.0.stderr.log".to_string()),
             }],
         },
+        truncation: None,
     };
 
     let value = serde_json::to_value(&receipt).expect("serialization should succeed");
@@ -442,10 +446,15 @@ fn test_receipt_all_verdict_statuses_validate() {
                 sarif_json: None,
                 raw_logs: vec![],
             },
+            truncation: None,
         };
 
         let value = serde_json::to_value(&receipt).expect("serialization should succeed");
-        validate_against_schema(&schema, &value, &format!("receipt with status {:?}", status));
+        validate_against_schema(
+            &schema,
+            &value,
+            &format!("receipt with status {:?}", status),
+        );
     }
 }
 
@@ -493,10 +502,15 @@ fn test_receipt_all_finding_levels_validate() {
                 sarif_json: None,
                 raw_logs: vec![],
             },
+            truncation: None,
         };
 
         let value = serde_json::to_value(&receipt).expect("serialization should succeed");
-        validate_against_schema(&schema, &value, &format!("receipt with finding level {:?}", level));
+        validate_against_schema(
+            &schema,
+            &value,
+            &format!("receipt with finding level {:?}", level),
+        );
     }
 }
 
@@ -550,12 +564,17 @@ fn test_golden_run_report_empty_roundtrip() {
     let reserialized = serde_json::to_value(&report).expect("reserialization failed");
 
     // Compare key fields (not exact match due to path normalization)
-    assert_eq!(golden["semverguard_version"], reserialized["semverguard_version"]);
+    assert_eq!(
+        golden["semverguard_version"],
+        reserialized["semverguard_version"]
+    );
     assert_eq!(golden["started_at"], reserialized["started_at"]);
     assert_eq!(golden["finished_at"], reserialized["finished_at"]);
     assert_eq!(golden["summary"], reserialized["summary"]);
-    assert_eq!(golden["packages"].as_array().unwrap().len(),
-               reserialized["packages"].as_array().unwrap().len());
+    assert_eq!(
+        golden["packages"].as_array().unwrap().len(),
+        reserialized["packages"].as_array().unwrap().len()
+    );
 }
 
 #[test]
@@ -566,9 +585,18 @@ fn test_golden_run_report_mixed_roundtrip() {
 
     // Verify summary counts match
     assert_eq!(golden["summary"]["total"], reserialized["summary"]["total"]);
-    assert_eq!(golden["summary"]["passed"], reserialized["summary"]["passed"]);
-    assert_eq!(golden["summary"]["failed"], reserialized["summary"]["failed"]);
-    assert_eq!(golden["summary"]["skipped"], reserialized["summary"]["skipped"]);
+    assert_eq!(
+        golden["summary"]["passed"],
+        reserialized["summary"]["passed"]
+    );
+    assert_eq!(
+        golden["summary"]["failed"],
+        reserialized["summary"]["failed"]
+    );
+    assert_eq!(
+        golden["summary"]["skipped"],
+        reserialized["summary"]["skipped"]
+    );
 
     // Verify package count and names
     let golden_pkgs = golden["packages"].as_array().unwrap();
@@ -585,7 +613,8 @@ fn test_golden_run_report_mixed_roundtrip() {
 #[test]
 fn test_golden_list_result_mixed_roundtrip() {
     let golden = load_golden("list_result_mixed.json");
-    let result: ListResult = serde_json::from_value(golden.clone()).expect("deserialization failed");
+    let result: ListResult =
+        serde_json::from_value(golden.clone()).expect("deserialization failed");
     let reserialized = serde_json::to_value(&result).expect("reserialization failed");
 
     let golden_check = golden["would_check"].as_array().unwrap();

@@ -123,6 +123,29 @@ Contains the legacy `RunReport` payload when available:
 }
 ```
 
+## `truncation`
+
+Optional. Present when findings exceed the 500-finding limit:
+
+```json
+{
+  "original_count": 742,
+  "limit": 500
+}
+```
+
+## Finding Identity Registry
+
+These `check_id`/`code` pairs are **API surface**. New pairs may be added in minor versions.
+Existing pairs will not be renamed without a major version bump.
+
+| check_id | code | level | description |
+|---|---|---|---|
+| `semver` | `violation` | error | SemVer policy violation |
+| `baseline` | `missing` | warning | Baseline not found |
+| `tool` | `error` | error | Tool/runtime error |
+| `engine` | `unknown` | error | Unclassifiable engine failure |
+
 ## See Also
 
 - [CLI Reference](./cli.md)
