@@ -8,8 +8,7 @@ use crate::sarif;
 use semverguard_types::{
     ArtifactIndex, BaselineConfig, CapabilityInfo, CapabilityStatus, FailureKind, Finding,
     FindingLevel, FindingLocation, PackageReport, PackageStatus, RawLogRef, RequiredBump,
-    RunCapabilities, RunReport, SemverguardData, SensorReportV1, ToolInfo, TruncationInfo, Verdict,
-    VerdictStatus,
+    RunCapabilities, RunReport, SemverguardData, SensorReportV1, ToolInfo, Verdict, VerdictStatus,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -31,9 +30,9 @@ pub const CHECK_BASELINE: &str = "baseline";
 /// Code for missing baseline.
 pub const CODE_MISSING: &str = "missing";
 /// Check ID for tool/runtime errors.
-pub const CHECK_TOOL: &str = "tool";
+pub const CHECK_TOOL: &str = "tool.runtime";
 /// Code for tool errors.
-pub const CODE_ERROR: &str = "error";
+pub const CODE_ERROR: &str = "runtime_error";
 /// Check ID for unclassifiable engine failures.
 pub const CHECK_ENGINE: &str = "engine";
 /// Code for unknown failures.
@@ -74,6 +73,8 @@ pub struct CapabilityContext {
     pub baseline_detail: Option<String>,
     /// Whether the repository is a shallow clone.
     pub shallow_clone: bool,
+    /// Git binary version string (e.g. "git version 2.39.0").
+    pub git_version: Option<String>,
 }
 
 impl CapabilityContext {
@@ -112,9 +113,23 @@ impl CapabilityContext {
         self
     }
 
+    /// Set git binary version string.
+    pub fn with_git_version(mut self, version: impl Into<String>) -> Self {
+        self.git_version = Some(version.into());
+        self
+    }
+
     /// Build the RunCapabilities from this context.
     pub fn build(&self) -> RunCapabilities {
-        let mut git_detail = self.git_detail.clone();
+        // Prefer git_version over config-based detail for truthfulness
+        let mut git_detail = if let Some(ver) = &self.git_version {
+            match &self.git_detail {
+                Some(cfg_detail) => Some(format!("{ver}; rev={cfg_detail}")),
+                None => Some(ver.clone()),
+            }
+        } else {
+            self.git_detail.clone()
+        };
         if self.shallow_clone {
             let existing = git_detail.unwrap_or_default();
             git_detail = Some(if existing.is_empty() {
@@ -124,6 +139,20 @@ impl CapabilityContext {
             });
         }
 
+        let git_reason = if !self.git_available {
+            Some("git_not_found".to_string())
+        } else if self.shallow_clone {
+            Some("shallow_clone".to_string())
+        } else {
+            None
+        };
+
+        let baseline_reason = if !self.baseline_available {
+            Some("resolution_failed".to_string())
+        } else {
+            None
+        };
+
         RunCapabilities {
             git: CapabilityInfo {
                 status: if self.git_available {
@@ -132,6 +161,7 @@ impl CapabilityContext {
                     CapabilityStatus::Unavailable
                 },
                 detail: git_detail,
+                reason: git_reason,
             },
             baseline: CapabilityInfo {
                 status: if self.baseline_available {
@@ -140,6 +170,7 @@ impl CapabilityContext {
                     CapabilityStatus::Unavailable
                 },
                 detail: self.baseline_detail.clone(),
+                reason: baseline_reason,
             },
         }
     }
@@ -147,7 +178,7 @@ impl CapabilityContext {
 
 /// Compute a stable semantic fingerprint for a finding.
 ///
-/// The fingerprint is a 32-character hex string derived from the SHA-256 hash
+/// The fingerprint is a 64-character hex string derived from the SHA-256 hash
 /// of the check_id, code, package name, and package version. This enables
 /// deterministic deduplication across runs.
 fn compute_fingerprint(check_id: &str, code: &str, pkg_name: &str, pkg_version: &str) -> String {
@@ -161,7 +192,7 @@ fn compute_fingerprint(check_id: &str, code: &str, pkg_name: &str, pkg_version: 
     hasher.update(b"\0");
     hasher.update(pkg_version.as_bytes());
     let result = hasher.finalize();
-    hex::encode(&result[..16])
+    hex::encode(result)
 }
 
 /// Resolve the artifacts directory against the workspace root.
@@ -279,18 +310,15 @@ pub fn build_receipt_with_capabilities_versioned(
     });
 
     // Truncation signaling (2B)
-    let truncation = if findings.len() > MAX_FINDINGS {
+    let (was_truncated, findings_total, findings_emitted) = if findings.len() > MAX_FINDINGS {
         let original = findings.len();
         findings.truncate(MAX_FINDINGS);
-        Some(TruncationInfo {
-            original_count: original,
-            limit: MAX_FINDINGS,
-        })
+        (true, Some(original), Some(MAX_FINDINGS))
     } else {
-        None
+        (false, None, None)
     };
 
-    let (verdict_status, verdict_reason) = derive_verdict(&findings, report);
+    let (verdict_status, verdict_reasons) = derive_verdict(&findings, report, was_truncated);
 
     let version = tool_version.unwrap_or(env!("CARGO_PKG_VERSION"));
 
@@ -304,12 +332,15 @@ pub fn build_receipt_with_capabilities_versioned(
         run: run_info,
         verdict: Verdict {
             status: verdict_status,
-            reason: verdict_reason,
+            reasons: verdict_reasons,
         },
         findings,
-        data: report.map(|r| SemverguardData { report: r.clone() }),
+        data: report.map(|r| SemverguardData {
+            report: r.clone(),
+            findings_total,
+            findings_emitted,
+        }),
         artifacts: artifacts.clone(),
-        truncation,
     }
 }
 
@@ -586,40 +617,59 @@ fn build_failure_message(pkg: &PackageReport, kind: FailureKind) -> String {
 fn derive_verdict(
     findings: &[Finding],
     report: Option<&RunReport>,
-) -> (VerdictStatus, Option<String>) {
+    was_truncated: bool,
+) -> (VerdictStatus, Vec<String>) {
     let mut has_tool = false;
     let mut has_semver = false;
+    let mut has_engine = false;
     let mut has_baseline = false;
 
     for f in findings {
         match f.check_id.as_str() {
             CHECK_TOOL => has_tool = true,
             CHECK_BASELINE => has_baseline = true,
-            CHECK_SEMVER | CHECK_ENGINE => has_semver = true,
+            CHECK_SEMVER => has_semver = true,
+            CHECK_ENGINE => has_engine = true,
             _ => {}
         }
     }
 
-    if has_tool {
-        return (VerdictStatus::Fail, Some("tool error".to_string()));
-    }
+    let mut reasons = Vec::new();
     if has_semver {
-        return (VerdictStatus::Fail, Some("semver violation".to_string()));
+        reasons.push("semver_violation".to_string());
     }
     if has_baseline {
-        return (VerdictStatus::Warn, Some("baseline issue".to_string()));
+        reasons.push("baseline_error".to_string());
+    }
+    if has_tool {
+        reasons.push("tool_error".to_string());
+    }
+    if has_engine {
+        reasons.push("engine_error".to_string());
+    }
+    if was_truncated {
+        reasons.push("truncated".to_string());
     }
 
-    if let Some(report) = report {
-        if report.summary.total > 0 && report.summary.total == report.summary.skipped {
-            return (
-                VerdictStatus::Skip,
-                Some("all packages skipped".to_string()),
-            );
-        }
+    let all_skipped = report
+        .map(|r| r.summary.total > 0 && r.summary.total == r.summary.skipped)
+        .unwrap_or(false);
+    if all_skipped {
+        reasons.push("all_packages_skipped".to_string());
     }
 
-    (VerdictStatus::Pass, None)
+    // Status determined by priority
+    let status = if has_tool || has_semver || has_engine {
+        VerdictStatus::Fail
+    } else if has_baseline {
+        VerdictStatus::Warn
+    } else if all_skipped {
+        VerdictStatus::Skip
+    } else {
+        VerdictStatus::Pass
+    };
+
+    (status, reasons)
 }
 
 fn build_raw_log_refs(
@@ -894,7 +944,7 @@ mod tests {
         let fp1 = compute_fingerprint("semver", "violation", "my-crate", "1.0.0");
         let fp2 = compute_fingerprint("semver", "violation", "my-crate", "1.0.0");
         assert_eq!(fp1, fp2);
-        assert_eq!(fp1.len(), 32); // 16 bytes = 32 hex chars
+        assert_eq!(fp1.len(), 64); // 32 bytes = 64 hex chars
     }
 
     #[test]
@@ -928,11 +978,13 @@ mod tests {
         let caps = ctx.build();
         assert_eq!(caps.git.status, CapabilityStatus::Available);
         assert_eq!(caps.git.detail, Some("git 2.39.0".to_string()));
+        assert!(caps.git.reason.is_none());
         assert_eq!(caps.baseline.status, CapabilityStatus::Available);
         assert_eq!(
             caps.baseline.detail,
             Some("baseline resolved from origin/main".to_string())
         );
+        assert!(caps.baseline.reason.is_none());
     }
 
     #[test]
@@ -945,7 +997,9 @@ mod tests {
 
         let caps = ctx.build();
         assert_eq!(caps.git.status, CapabilityStatus::Unavailable);
+        assert_eq!(caps.git.reason, Some("git_not_found".to_string()));
         assert_eq!(caps.baseline.status, CapabilityStatus::Unavailable);
+        assert_eq!(caps.baseline.reason, Some("resolution_failed".to_string()));
     }
 
     #[test]
@@ -1067,6 +1121,46 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_receipt_path_forward_slashes() {
+        let workspace = Path::new("/workspace");
+        let result = normalize_receipt_path(workspace, Path::new("/workspace/foo/bar/Cargo.toml"));
+        assert!(
+            !result.contains('\\'),
+            "Normalized path should not contain backslashes: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_normalize_receipt_path_no_absolute_in_output() {
+        let workspace = Path::new("/workspace");
+        let result =
+            normalize_receipt_path(workspace, Path::new("/workspace/crates/lib/Cargo.toml"));
+        assert!(
+            !result.starts_with('/'),
+            "Normalized path should be relative, not absolute: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_normalize_receipt_path_relative_input() {
+        let workspace = Path::new("/workspace");
+        let result =
+            normalize_receipt_path(workspace, Path::new("artifacts/semverguard/report.json"));
+        assert!(
+            !result.contains('\\'),
+            "Relative path should use forward slashes: {}",
+            result
+        );
+        assert!(
+            !result.contains(".."),
+            "Relative path should not contain path traversal: {}",
+            result
+        );
+    }
+
+    #[test]
     fn test_truncation_not_applied_under_limit() {
         let report = sample_report();
         let artifacts = build_artifact_index(
@@ -1082,7 +1176,15 @@ mod tests {
             &BaselineConfig::default(),
             report.workspace_root.as_path(),
         );
-        assert!(receipt.truncation.is_none());
+        // Under the limit: no truncation totals in data, no "truncated" reason
+        if let Some(data) = &receipt.data {
+            assert!(data.findings_total.is_none());
+            assert!(data.findings_emitted.is_none());
+        }
+        assert!(
+            !receipt.verdict.reasons.contains(&"truncated".to_string()),
+            "Verdict should not contain 'truncated' reason when under limit"
+        );
     }
 
     #[test]
@@ -1093,5 +1195,6 @@ mod tests {
         let caps = ctx.build();
         assert_eq!(caps.git.status, CapabilityStatus::Available);
         assert!(caps.git.detail.as_ref().unwrap().contains("shallow clone"));
+        assert_eq!(caps.git.reason, Some("shallow_clone".to_string()));
     }
 }

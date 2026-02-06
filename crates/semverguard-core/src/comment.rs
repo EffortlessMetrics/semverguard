@@ -123,7 +123,10 @@ pub fn render_comment(receipt: &SensorReportV1) -> String {
         .findings
         .iter()
         .filter(|f| f.level != semverguard_types::FindingLevel::Info)
-        .filter(|f| f.level == semverguard_types::FindingLevel::Warning || f.check_id == "tool")
+        .filter(|f| {
+            f.level == semverguard_types::FindingLevel::Warning
+                || f.check_id == crate::receipt::CHECK_TOOL
+        })
         .map(|f| format!("- {}: {}", f.check_id, f.message))
         .collect::<Vec<_>>();
 
@@ -164,7 +167,7 @@ mod tests {
             },
             verdict: Verdict {
                 status: VerdictStatus::Pass,
-                reason: None,
+                reasons: vec![],
             },
             findings: vec![],
             data: None,
@@ -174,7 +177,6 @@ mod tests {
                 sarif_json: None,
                 raw_logs: vec![],
             },
-            truncation: None,
         }
     }
 
@@ -244,6 +246,8 @@ mod tests {
         let mut receipt = minimal_receipt();
         receipt.data = Some(SemverguardData {
             report: minimal_report(packages),
+            findings_total: None,
+            findings_emitted: None,
         });
 
         let comment = render_comment(&receipt);
@@ -273,6 +277,8 @@ mod tests {
         receipt.verdict.status = VerdictStatus::Fail;
         receipt.data = Some(SemverguardData {
             report: minimal_report(packages),
+            findings_total: None,
+            findings_emitted: None,
         });
 
         let comment = render_comment(&receipt);
@@ -290,6 +296,8 @@ mod tests {
         let mut receipt = minimal_receipt();
         receipt.data = Some(SemverguardData {
             report: minimal_report(packages),
+            findings_total: None,
+            findings_emitted: None,
         });
 
         let comment = render_comment(&receipt);
@@ -307,6 +315,8 @@ mod tests {
         let mut receipt = minimal_receipt();
         receipt.data = Some(SemverguardData {
             report: minimal_report(packages),
+            findings_total: None,
+            findings_emitted: None,
         });
 
         let comment = render_comment(&receipt);
@@ -318,7 +328,7 @@ mod tests {
     fn test_unicode_in_findings() {
         let mut receipt = minimal_receipt();
         receipt.findings = vec![Finding {
-            check_id: "tool".to_string(),
+            check_id: "tool.runtime".to_string(),
             code: "warning".to_string(),
             level: FindingLevel::Warning,
             message: "警告: 需要版本升级".to_string(),
@@ -343,6 +353,8 @@ mod tests {
         receipt.verdict.status = VerdictStatus::Skip;
         receipt.data = Some(SemverguardData {
             report: minimal_report(packages),
+            findings_total: None,
+            findings_emitted: None,
         });
 
         let comment = render_comment(&receipt);
@@ -366,6 +378,8 @@ mod tests {
         receipt.verdict.status = VerdictStatus::Fail;
         receipt.data = Some(SemverguardData {
             report: minimal_report(packages),
+            findings_total: None,
+            findings_emitted: None,
         });
 
         let comment = render_comment(&receipt);
@@ -386,6 +400,8 @@ mod tests {
         receipt.verdict.status = VerdictStatus::Fail;
         receipt.data = Some(SemverguardData {
             report: minimal_report(packages),
+            findings_total: None,
+            findings_emitted: None,
         });
         receipt.artifacts.raw_logs = vec![RawLogRef {
             package: "lib-a".to_string(),
@@ -404,7 +420,7 @@ mod tests {
         let mut receipt = minimal_receipt();
         receipt.findings = vec![
             Finding {
-                check_id: "tool".to_string(),
+                check_id: "tool.runtime".to_string(),
                 code: "missing-baseline".to_string(),
                 level: FindingLevel::Warning,
                 message: "Could not resolve baseline".to_string(),
@@ -413,7 +429,7 @@ mod tests {
                 fingerprint: None,
             },
             Finding {
-                check_id: "tool".to_string(),
+                check_id: "tool.runtime".to_string(),
                 code: "git-not-found".to_string(),
                 level: FindingLevel::Warning,
                 message: "Git binary not found".to_string(),
@@ -490,6 +506,8 @@ mod tests {
         receipt.verdict.status = VerdictStatus::Fail;
         receipt.data = Some(SemverguardData {
             report: minimal_report(packages),
+            findings_total: None,
+            findings_emitted: None,
         });
 
         let comment = render_comment(&receipt);

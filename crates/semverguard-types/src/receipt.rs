@@ -22,6 +22,9 @@ pub struct CapabilityInfo {
     /// Optional detail explaining the status.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Machine-readable reason token explaining the status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// Capabilities block for "No Green By Omission".
@@ -34,15 +37,6 @@ pub struct RunCapabilities {
     pub git: CapabilityInfo,
     /// Baseline resolution status.
     pub baseline: CapabilityInfo,
-}
-
-/// Truncation information when findings exceed the limit.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TruncationInfo {
-    /// Number of findings before truncation.
-    pub original_count: usize,
-    /// Maximum number of findings retained.
-    pub limit: usize,
 }
 
 /// Sensor report envelope for cockpit ingestion (v1).
@@ -63,9 +57,6 @@ pub struct SensorReportV1 {
     pub data: Option<SemverguardData>,
     /// Artifact index for the run.
     pub artifacts: ArtifactIndex,
-    /// Truncation info when findings were capped.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub truncation: Option<TruncationInfo>,
 }
 
 /// Tool information for the receipt.
@@ -103,9 +94,9 @@ pub struct RunInfo {
 pub struct Verdict {
     /// Verdict status.
     pub status: VerdictStatus,
-    /// Optional explanation.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
+    /// Machine-readable reason tokens explaining the verdict.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasons: Vec<String>,
 }
 
 /// Verdict status values.
@@ -181,6 +172,12 @@ pub struct FindingLocation {
 pub struct SemverguardData {
     /// Legacy run report payload.
     pub report: RunReport,
+    /// Total number of findings before truncation (if truncated).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub findings_total: Option<usize>,
+    /// Number of findings emitted after truncation (if truncated).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub findings_emitted: Option<usize>,
 }
 
 /// Artifact index for a receipt.
@@ -265,17 +262,20 @@ mod tests {
             },
             verdict: Verdict {
                 status: VerdictStatus::Pass,
-                reason: Some("all checks passed".to_string()),
+                reasons: vec![],
             },
             findings: vec![],
-            data: Some(SemverguardData { report }),
+            data: Some(SemverguardData {
+                report,
+                findings_total: None,
+                findings_emitted: None,
+            }),
             artifacts: ArtifactIndex {
                 report_json: "artifacts/semverguard/report.json".to_string(),
                 comment_md: "artifacts/semverguard/comment.md".to_string(),
                 sarif_json: None,
                 raw_logs: vec![],
             },
-            truncation: None,
         };
 
         let json = serde_json::to_string(&receipt).unwrap();
@@ -349,17 +349,20 @@ mod tests {
             },
             verdict: Verdict {
                 status: VerdictStatus::Pass,
-                reason: None,
+                reasons: vec![],
             },
             findings: vec![],
-            data: Some(SemverguardData { report }),
+            data: Some(SemverguardData {
+                report,
+                findings_total: None,
+                findings_emitted: None,
+            }),
             artifacts: ArtifactIndex {
                 report_json: "artifacts/semverguard/report.json".to_string(),
                 comment_md: "artifacts/semverguard/comment.md".to_string(),
                 sarif_json: None,
                 raw_logs: vec![],
             },
-            truncation: None,
         };
 
         let value = serde_json::to_value(receipt).unwrap();

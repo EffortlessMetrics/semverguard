@@ -576,7 +576,7 @@ pub fn receipt_to_sarif(receipt: &SensorReportV1) -> SarifLog {
 fn finding_to_sarif_result(finding: &Finding) -> SarifResult {
     let (rule_id, level) = match finding.check_id.as_str() {
         "baseline" => (RULE_BASELINE_ERROR, SarifLevel::Warning),
-        "tool" => (RULE_TOOL_ERROR, SarifLevel::Error),
+        "tool.runtime" => (RULE_TOOL_ERROR, SarifLevel::Error),
         "semver" => {
             if let Some(bump) = finding
                 .data

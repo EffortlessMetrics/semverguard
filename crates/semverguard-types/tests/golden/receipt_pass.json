@@ -19,8 +19,7 @@
     }
   },
   "verdict": {
-    "status": "pass",
-    "reason": null
+    "status": "pass"
   },
   "findings": [],
   "data": null,

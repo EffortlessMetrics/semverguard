@@ -64,6 +64,13 @@ impl GitCli {
         self.run_git(workspace_root, &["--version"]).is_ok()
     }
 
+    /// Return the git version string, or None if git is not available.
+    pub fn version(&self, workspace_root: &Path) -> Option<String> {
+        self.run_git(workspace_root, &["--version"])
+            .ok()
+            .map(|s| s.trim().to_string())
+    }
+
     /// Check if the repo is a shallow clone.
     pub fn is_shallow(&self, workspace_root: &Path) -> Result<bool> {
         let output = self.run_git(workspace_root, &["rev-parse", "--is-shallow-repository"])?;

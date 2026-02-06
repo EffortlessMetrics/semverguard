@@ -27,7 +27,10 @@
   },
   "verdict": {
     "status": "fail",
-    "reason": "semver violation"
+    "reasons": [
+      "semver_violation",
+      "baseline_error"
+    ]
   },
   "findings": [
     {
@@ -46,7 +49,7 @@
         "required_bump": null,
         "version": "0.2.0"
       },
-      "fingerprint": "55c6c63ec662ae3c54cafae7d58ad3ed"
+      "fingerprint": "55c6c63ec662ae3c54cafae7d58ad3ed08e5a41be73abc97e54bf6c028945674"
     },
     {
       "check_id": "semver",
@@ -65,7 +68,7 @@
         "suggested_version": "2.0.0",
         "version": "1.0.0"
       },
-      "fingerprint": "d168f6b47520325f9be045d09b02b05e"
+      "fingerprint": "d168f6b47520325f9be045d09b02b05e47f7ad212853431c50711c420d3e9635"
     }
   ],
   "data": {

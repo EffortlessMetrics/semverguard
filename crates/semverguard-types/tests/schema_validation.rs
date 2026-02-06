@@ -325,7 +325,7 @@ fn test_receipt_pass_validates_against_schema() {
         },
         verdict: semverguard_types::Verdict {
             status: semverguard_types::VerdictStatus::Pass,
-            reason: None,
+            reasons: vec![],
         },
         findings: vec![],
         data: None,
@@ -335,7 +335,6 @@ fn test_receipt_pass_validates_against_schema() {
             sarif_json: None,
             raw_logs: vec![],
         },
-        truncation: None,
     };
 
     let value = serde_json::to_value(&receipt).expect("serialization should succeed");
@@ -370,7 +369,7 @@ fn test_receipt_fail_with_findings_validates_against_schema() {
         },
         verdict: semverguard_types::Verdict {
             status: semverguard_types::VerdictStatus::Fail,
-            reason: Some("semver violation".to_string()),
+            reasons: vec!["semver_violation".to_string()],
         },
         findings: vec![semverguard_types::Finding {
             check_id: "semver".to_string(),
@@ -402,7 +401,6 @@ fn test_receipt_fail_with_findings_validates_against_schema() {
                 stderr: Some("artifacts/semverguard/raw/lib-a-1.0.0.stderr.log".to_string()),
             }],
         },
-        truncation: None,
     };
 
     let value = serde_json::to_value(&receipt).expect("serialization should succeed");
@@ -436,7 +434,7 @@ fn test_receipt_all_verdict_statuses_validate() {
             },
             verdict: semverguard_types::Verdict {
                 status,
-                reason: None,
+                reasons: vec![],
             },
             findings: vec![],
             data: None,
@@ -446,7 +444,6 @@ fn test_receipt_all_verdict_statuses_validate() {
                 sarif_json: None,
                 raw_logs: vec![],
             },
-            truncation: None,
         };
 
         let value = serde_json::to_value(&receipt).expect("serialization should succeed");
@@ -484,7 +481,7 @@ fn test_receipt_all_finding_levels_validate() {
             },
             verdict: semverguard_types::Verdict {
                 status: semverguard_types::VerdictStatus::Fail,
-                reason: None,
+                reasons: vec![],
             },
             findings: vec![semverguard_types::Finding {
                 check_id: "test".to_string(),
@@ -502,7 +499,6 @@ fn test_receipt_all_finding_levels_validate() {
                 sarif_json: None,
                 raw_logs: vec![],
             },
-            truncation: None,
         };
 
         let value = serde_json::to_value(&receipt).expect("serialization should succeed");

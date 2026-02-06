@@ -15,6 +15,7 @@ pub fn build_capability_context(
     report: &RunReport,
     git_available: bool,
     shallow_clone: bool,
+    git_version: Option<String>,
 ) -> CapabilityContext {
     let git_detail = if git_available {
         config.baseline.rev.clone()
@@ -44,6 +45,9 @@ pub fn build_capability_context(
         .with_baseline_available(baseline_available)
         .with_shallow_clone(shallow_clone);
 
+    if let Some(ver) = git_version {
+        ctx = ctx.with_git_version(ver);
+    }
     if let Some(detail) = git_detail {
         ctx = ctx.with_git_detail(detail);
     }
@@ -82,7 +86,7 @@ mod tests {
         config.baseline.kind = BaselineKind::Git;
         config.baseline.rev = Some("origin/main".to_string());
 
-        let ctx = build_capability_context(&config, &empty_report(), true, false);
+        let ctx = build_capability_context(&config, &empty_report(), true, false, None);
         let caps = ctx.build();
         assert_eq!(caps.git.status, CapabilityStatus::Available);
         assert_eq!(caps.git.detail, Some("origin/main".to_string()));
@@ -91,7 +95,7 @@ mod tests {
     #[test]
     fn test_git_unavailable() {
         let config = SemverguardConfig::default();
-        let ctx = build_capability_context(&config, &empty_report(), false, false);
+        let ctx = build_capability_context(&config, &empty_report(), false, false, None);
         let caps = ctx.build();
         assert_eq!(caps.git.status, CapabilityStatus::Unavailable);
     }
@@ -102,7 +106,7 @@ mod tests {
         config.baseline.kind = BaselineKind::Git;
         config.baseline.rev = Some("origin/main".to_string());
 
-        let ctx = build_capability_context(&config, &empty_report(), true, true);
+        let ctx = build_capability_context(&config, &empty_report(), true, true, None);
         let caps = ctx.build();
         assert_eq!(caps.git.status, CapabilityStatus::Available);
         assert!(caps.git.detail.as_ref().unwrap().contains("shallow clone"));
@@ -141,7 +145,7 @@ mod tests {
             },
         };
 
-        let ctx = build_capability_context(&config, &report, true, false);
+        let ctx = build_capability_context(&config, &report, true, false, None);
         let caps = ctx.build();
         assert_eq!(caps.baseline.status, CapabilityStatus::Unavailable);
         assert_eq!(

@@ -20,7 +20,7 @@
   },
   "verdict": {
     "status": "fail",
-    "reason": "semver violation"
+    "reasons": ["semver_violation"]
   },
   "findings": [
     {

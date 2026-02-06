@@ -386,6 +386,7 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
     // Probe git capabilities
     let git_available = git.is_available(&args.workspace_root);
     let shallow_clone = git.is_shallow(&args.workspace_root).unwrap_or(false);
+    let git_version = git.version(&args.workspace_root);
 
     // Create progress reporter based on CLI flag
     let progress_choice: ProgressChoice = args.progress.clone().into();
@@ -440,7 +441,8 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
         );
 
         // Build capability context using probed git results
-        let capability_ctx = build_capability_context(&cfg, &report, git_available, shallow_clone);
+        let capability_ctx =
+            build_capability_context(&cfg, &report, git_available, shallow_clone, git_version);
 
         let receipt = build_receipt_with_capabilities(
             Some(&report),

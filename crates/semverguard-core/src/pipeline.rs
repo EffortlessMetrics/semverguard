@@ -156,7 +156,7 @@ pub fn run_with_adapters(
     );
 
     let capability_ctx =
-        build_capability_context(&options.config, &report, git_available, shallow_clone);
+        build_capability_context(&options.config, &report, git_available, shallow_clone, None);
 
     let receipt = build_receipt_with_capabilities_versioned(
         Some(&report),
@@ -200,6 +200,7 @@ pub fn run(options: &PipelineOptions) -> Result<PipelineResult> {
     // Probe shallow clone
     let shallow_clone = git.is_shallow(&options.workspace_root).unwrap_or(false);
     let git_available = git.is_available(&options.workspace_root);
+    let git_version = git.version(&options.workspace_root);
 
     let receipt_requested = matches!(options.config.output.format, OutputFormat::Receipt);
     let artifacts_root = resolve_artifacts_dir(
@@ -292,8 +293,13 @@ pub fn run(options: &PipelineOptions) -> Result<PipelineResult> {
         options.sarif,
     );
 
-    let capability_ctx =
-        build_capability_context(&options.config, &report, git_available, shallow_clone);
+    let capability_ctx = build_capability_context(
+        &options.config,
+        &report,
+        git_available,
+        shallow_clone,
+        git_version,
+    );
 
     let receipt = build_receipt_with_capabilities_versioned(
         Some(&report),
