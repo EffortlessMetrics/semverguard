@@ -918,3 +918,70 @@ fn test_package_report_json_structure_is_stable() {
     assert!(engine.get("stderr").is_some());
     assert!(engine.get("required_bump").is_some());
 }
+
+// =============================================================================
+// Drift Guard Tests — contracts/ is source of truth, docs/schema/ must track it
+// =============================================================================
+
+fn docs_schema_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/schema")
+}
+
+/// Strip the `$comment` key from a JSON object (docs/schema files add a redirect
+/// comment that isn't present in the contracts source of truth).
+fn strip_comment(value: &mut Value) {
+    if let Some(obj) = value.as_object_mut() {
+        obj.remove("$comment");
+    }
+}
+
+#[test]
+fn test_drift_guard_sensor_report_schema() {
+    let contract =
+        fs::read_to_string(schema_dir().join("sensor.report.v1.json")).expect("read contract");
+    let docs = fs::read_to_string(docs_schema_dir().join("sensor.report.v1.json"))
+        .expect("read docs/schema");
+
+    let contract_json: Value = serde_json::from_str(&contract).expect("parse contract");
+    let mut docs_json: Value = serde_json::from_str(&docs).expect("parse docs");
+    strip_comment(&mut docs_json);
+
+    assert_eq!(
+        contract_json, docs_json,
+        "docs/schema/sensor.report.v1.json has drifted from contracts/sensor.report.v1.json"
+    );
+}
+
+#[test]
+fn test_drift_guard_run_report_schema() {
+    let contract =
+        fs::read_to_string(schema_dir().join("run.report.v1.json")).expect("read contract");
+    let docs =
+        fs::read_to_string(docs_schema_dir().join("run.report.v1.json")).expect("read docs/schema");
+
+    let contract_json: Value = serde_json::from_str(&contract).expect("parse contract");
+    let mut docs_json: Value = serde_json::from_str(&docs).expect("parse docs");
+    strip_comment(&mut docs_json);
+
+    assert_eq!(
+        contract_json, docs_json,
+        "docs/schema/run.report.v1.json has drifted from contracts/run.report.v1.json"
+    );
+}
+
+#[test]
+fn test_drift_guard_list_result_schema() {
+    let contract =
+        fs::read_to_string(schema_dir().join("list.result.v1.json")).expect("read contract");
+    let docs = fs::read_to_string(docs_schema_dir().join("list.result.v1.json"))
+        .expect("read docs/schema");
+
+    let contract_json: Value = serde_json::from_str(&contract).expect("parse contract");
+    let mut docs_json: Value = serde_json::from_str(&docs).expect("parse docs");
+    strip_comment(&mut docs_json);
+
+    assert_eq!(
+        contract_json, docs_json,
+        "docs/schema/list.result.v1.json has drifted from contracts/list.result.v1.json"
+    );
+}

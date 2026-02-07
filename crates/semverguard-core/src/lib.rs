@@ -24,6 +24,8 @@ pub mod exit_code;
 pub mod pipeline;
 /// Receipt building, fingerprinting, and writing.
 pub mod receipt;
+/// In-memory receipt source for embedders (path filtering and sorting).
+pub mod receipt_source;
 /// SARIF 2.1.0 report generation.
 pub mod sarif;
 
@@ -37,3 +39,4 @@ pub use receipt::{
     build_receipt_with_capabilities, exit_code_from_receipt, has_tool_error, resolve_artifacts_dir,
     write_receipt_bundle,
 };
+pub use receipt_source::{InMemoryReceiptSource, ReceiptEntry};

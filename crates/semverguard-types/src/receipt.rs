@@ -325,8 +325,8 @@ mod tests {
     fn test_receipt_schema_validation() {
         use std::fs;
 
-        let schema_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/schema/sensor.report.v1.json");
+        let schema_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../contracts/sensor.report.v1.json");
         let schema_str = fs::read_to_string(schema_path).unwrap();
         let schema_json: serde_json::Value = serde_json::from_str(&schema_str).unwrap();
         let validator = jsonschema::validator_for(&schema_json).unwrap();
