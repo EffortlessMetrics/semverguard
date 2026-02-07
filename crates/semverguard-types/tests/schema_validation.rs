@@ -17,7 +17,7 @@ use std::path::PathBuf;
 // =============================================================================
 
 fn schema_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/schema")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../contracts")
 }
 
 fn golden_dir() -> PathBuf {

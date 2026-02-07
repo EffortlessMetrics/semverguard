@@ -100,10 +100,13 @@ pub fn run_with_adapters(
                 options.sarif,
             );
 
+            let git_skipped = !matches!(options.config.baseline.kind, BaselineKind::Git);
+
             let capability_ctx = CapabilityContext::new()
                 .with_git_available(git_available)
                 .with_baseline_available(false)
-                .with_baseline_detail(format!("error: {e}"));
+                .with_baseline_detail(format!("error: {e}"))
+                .with_git_skipped(git_skipped);
 
             let receipt = build_receipt_with_capabilities_versioned(
                 None,
@@ -237,11 +240,14 @@ pub fn run(options: &PipelineOptions) -> Result<PipelineResult> {
                 options.sarif,
             );
 
+            let git_skipped = !matches!(options.config.baseline.kind, BaselineKind::Git);
+
             let capability_ctx = CapabilityContext::new()
                 .with_git_available(git_available)
                 .with_baseline_available(false)
                 .with_baseline_detail(format!("error: {e}"))
-                .with_shallow_clone(shallow_clone);
+                .with_shallow_clone(shallow_clone)
+                .with_git_skipped(git_skipped);
 
             let receipt = build_receipt_with_capabilities_versioned(
                 None,

@@ -1,6 +1,5 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "Source of truth is contracts/run.report.v1.json",
   "$id": "run.report.v1",
   "title": "RunReport",
   "description": "Top-level report for a semverguard run.",

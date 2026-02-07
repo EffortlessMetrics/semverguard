@@ -1,6 +1,5 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "Source of truth is contracts/sensor.report.v1.json",
   "$defs": {
     "capability_info": {
       "type": "object",

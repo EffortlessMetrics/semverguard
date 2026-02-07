@@ -38,6 +38,36 @@ pub const CHECK_ENGINE: &str = "engine";
 /// Code for unknown failures.
 pub const CODE_UNKNOWN: &str = "unknown";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Verdict reason tokens
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Verdict reason: SemVer violation detected.
+pub const REASON_SEMVER_VIOLATION: &str = "semver_violation";
+/// Verdict reason: baseline was unavailable.
+pub const REASON_BASELINE_UNAVAILABLE: &str = "baseline_unavailable";
+/// Verdict reason: tool/runtime error.
+pub const REASON_TOOL_ERROR: &str = "tool_error";
+/// Verdict reason: engine error.
+pub const REASON_ENGINE_ERROR: &str = "engine_error";
+/// Verdict reason: findings were truncated.
+pub const REASON_TRUNCATED: &str = "truncated";
+/// Verdict reason: all packages were skipped.
+pub const REASON_ALL_PACKAGES_SKIPPED: &str = "all_packages_skipped";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Capability reason tokens
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Capability reason: git binary not found.
+pub const CAP_REASON_GIT_UNAVAILABLE: &str = "git_unavailable";
+/// Capability reason: shallow clone detected.
+pub const CAP_REASON_SHALLOW_CLONE: &str = "shallow_clone";
+/// Capability reason: baseline resolution failed.
+pub const CAP_REASON_RESOLUTION_FAILED: &str = "resolution_failed";
+/// Capability reason: capability not required for this configuration.
+pub const CAP_REASON_NOT_REQUIRED: &str = "not_required";
+
 /// Maximum number of findings in a receipt before truncation.
 const MAX_FINDINGS: usize = 500;
 
@@ -75,6 +105,10 @@ pub struct CapabilityContext {
     pub shallow_clone: bool,
     /// Git binary version string (e.g. "git version 2.39.0").
     pub git_version: Option<String>,
+    /// Whether git capability was not required (e.g. crates-io baseline).
+    pub git_skipped: bool,
+    /// Whether baseline capability was not required.
+    pub baseline_skipped: bool,
 }
 
 impl CapabilityContext {
@@ -119,6 +153,18 @@ impl CapabilityContext {
         self
     }
 
+    /// Mark git capability as not required (skipped).
+    pub fn with_git_skipped(mut self, skipped: bool) -> Self {
+        self.git_skipped = skipped;
+        self
+    }
+
+    /// Mark baseline capability as not required (skipped).
+    pub fn with_baseline_skipped(mut self, skipped: bool) -> Self {
+        self.baseline_skipped = skipped;
+        self
+    }
+
     /// Build the RunCapabilities from this context.
     pub fn build(&self) -> RunCapabilities {
         // Prefer git_version over config-based detail for truthfulness
@@ -139,36 +185,47 @@ impl CapabilityContext {
             });
         }
 
-        let git_reason = if !self.git_available {
-            Some("git_not_found".to_string())
+        let (git_status, git_reason) = if self.git_skipped {
+            (
+                CapabilityStatus::Skipped,
+                Some(CAP_REASON_NOT_REQUIRED.to_string()),
+            )
+        } else if !self.git_available {
+            (
+                CapabilityStatus::Unavailable,
+                Some(CAP_REASON_GIT_UNAVAILABLE.to_string()),
+            )
         } else if self.shallow_clone {
-            Some("shallow_clone".to_string())
+            (
+                CapabilityStatus::Available,
+                Some(CAP_REASON_SHALLOW_CLONE.to_string()),
+            )
         } else {
-            None
+            (CapabilityStatus::Available, None)
         };
 
-        let baseline_reason = if !self.baseline_available {
-            Some("resolution_failed".to_string())
+        let (baseline_status, baseline_reason) = if self.baseline_skipped {
+            (
+                CapabilityStatus::Skipped,
+                Some(CAP_REASON_NOT_REQUIRED.to_string()),
+            )
+        } else if !self.baseline_available {
+            (
+                CapabilityStatus::Unavailable,
+                Some(CAP_REASON_RESOLUTION_FAILED.to_string()),
+            )
         } else {
-            None
+            (CapabilityStatus::Available, None)
         };
 
         RunCapabilities {
             git: CapabilityInfo {
-                status: if self.git_available {
-                    CapabilityStatus::Available
-                } else {
-                    CapabilityStatus::Unavailable
-                },
+                status: git_status,
                 detail: git_detail,
                 reason: git_reason,
             },
             baseline: CapabilityInfo {
-                status: if self.baseline_available {
-                    CapabilityStatus::Available
-                } else {
-                    CapabilityStatus::Unavailable
-                },
+                status: baseline_status,
                 detail: self.baseline_detail.clone(),
                 reason: baseline_reason,
             },
@@ -636,26 +693,26 @@ fn derive_verdict(
 
     let mut reasons = Vec::new();
     if has_semver {
-        reasons.push("semver_violation".to_string());
+        reasons.push(REASON_SEMVER_VIOLATION.to_string());
     }
     if has_baseline {
-        reasons.push("baseline_error".to_string());
+        reasons.push(REASON_BASELINE_UNAVAILABLE.to_string());
     }
     if has_tool {
-        reasons.push("tool_error".to_string());
+        reasons.push(REASON_TOOL_ERROR.to_string());
     }
     if has_engine {
-        reasons.push("engine_error".to_string());
+        reasons.push(REASON_ENGINE_ERROR.to_string());
     }
     if was_truncated {
-        reasons.push("truncated".to_string());
+        reasons.push(REASON_TRUNCATED.to_string());
     }
 
     let all_skipped = report
         .map(|r| r.summary.total > 0 && r.summary.total == r.summary.skipped)
         .unwrap_or(false);
     if all_skipped {
-        reasons.push("all_packages_skipped".to_string());
+        reasons.push(REASON_ALL_PACKAGES_SKIPPED.to_string());
     }
 
     // Status determined by priority
@@ -997,7 +1054,7 @@ mod tests {
 
         let caps = ctx.build();
         assert_eq!(caps.git.status, CapabilityStatus::Unavailable);
-        assert_eq!(caps.git.reason, Some("git_not_found".to_string()));
+        assert_eq!(caps.git.reason, Some("git_unavailable".to_string()));
         assert_eq!(caps.baseline.status, CapabilityStatus::Unavailable);
         assert_eq!(caps.baseline.reason, Some("resolution_failed".to_string()));
     }
@@ -1077,6 +1134,30 @@ mod tests {
             assert!(
                 re.is_match(token),
                 "Token '{}' does not match expected format",
+                token
+            );
+        }
+    }
+
+    #[test]
+    fn test_reason_token_format() {
+        let tokens = [
+            REASON_SEMVER_VIOLATION,
+            REASON_BASELINE_UNAVAILABLE,
+            REASON_TOOL_ERROR,
+            REASON_ENGINE_ERROR,
+            REASON_TRUNCATED,
+            REASON_ALL_PACKAGES_SKIPPED,
+            CAP_REASON_GIT_UNAVAILABLE,
+            CAP_REASON_SHALLOW_CLONE,
+            CAP_REASON_RESOLUTION_FAILED,
+            CAP_REASON_NOT_REQUIRED,
+        ];
+        let re = regex_lite::Regex::new(r"^[a-z][a-z0-9_]*$").unwrap();
+        for token in &tokens {
+            assert!(
+                re.is_match(token),
+                "Reason token '{}' does not match expected format",
                 token
             );
         }
@@ -1196,5 +1277,47 @@ mod tests {
         assert_eq!(caps.git.status, CapabilityStatus::Available);
         assert!(caps.git.detail.as_ref().unwrap().contains("shallow clone"));
         assert_eq!(caps.git.reason, Some("shallow_clone".to_string()));
+    }
+
+    #[test]
+    fn test_git_skipped_overrides_available() {
+        // Even when git is available, skipped takes priority
+        let ctx = CapabilityContext::new()
+            .with_git_available(true)
+            .with_git_skipped(true);
+        let caps = ctx.build();
+        assert_eq!(caps.git.status, CapabilityStatus::Skipped);
+        assert_eq!(caps.git.reason, Some("not_required".to_string()));
+    }
+
+    #[test]
+    fn test_git_skipped_overrides_unavailable() {
+        // Even when git is unavailable, skipped takes priority
+        let ctx = CapabilityContext::new()
+            .with_git_available(false)
+            .with_git_skipped(true);
+        let caps = ctx.build();
+        assert_eq!(caps.git.status, CapabilityStatus::Skipped);
+        assert_eq!(caps.git.reason, Some("not_required".to_string()));
+    }
+
+    #[test]
+    fn test_baseline_skipped() {
+        let ctx = CapabilityContext::new()
+            .with_baseline_available(true)
+            .with_baseline_skipped(true);
+        let caps = ctx.build();
+        assert_eq!(caps.baseline.status, CapabilityStatus::Skipped);
+        assert_eq!(caps.baseline.reason, Some("not_required".to_string()));
+    }
+
+    #[test]
+    fn test_baseline_skipped_overrides_unavailable() {
+        let ctx = CapabilityContext::new()
+            .with_baseline_available(false)
+            .with_baseline_skipped(true);
+        let caps = ctx.build();
+        assert_eq!(caps.baseline.status, CapabilityStatus::Skipped);
+        assert_eq!(caps.baseline.reason, Some("not_required".to_string()));
     }
 }

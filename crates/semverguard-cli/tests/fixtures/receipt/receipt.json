@@ -29,7 +29,7 @@
     "status": "fail",
     "reasons": [
       "semver_violation",
-      "baseline_error"
+      "baseline_unavailable"
     ]
   },
   "findings": [

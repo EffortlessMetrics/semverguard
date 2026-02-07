@@ -29,8 +29,11 @@ pub mod sarif;
 
 pub use capability::*;
 pub use receipt::{
-    CHECK_BASELINE, CHECK_ENGINE, CHECK_SEMVER, CHECK_TOOL, CODE_ERROR, CODE_MISSING, CODE_UNKNOWN,
-    CODE_VIOLATION, CapabilityContext, ToolErrorFinding, build_artifact_index, build_receipt,
+    CAP_REASON_GIT_UNAVAILABLE, CAP_REASON_NOT_REQUIRED, CAP_REASON_RESOLUTION_FAILED,
+    CAP_REASON_SHALLOW_CLONE, CHECK_BASELINE, CHECK_ENGINE, CHECK_SEMVER, CHECK_TOOL, CODE_ERROR,
+    CODE_MISSING, CODE_UNKNOWN, CODE_VIOLATION, CapabilityContext, REASON_ALL_PACKAGES_SKIPPED,
+    REASON_BASELINE_UNAVAILABLE, REASON_ENGINE_ERROR, REASON_SEMVER_VIOLATION, REASON_TOOL_ERROR,
+    REASON_TRUNCATED, ToolErrorFinding, build_artifact_index, build_receipt,
     build_receipt_with_capabilities, exit_code_from_receipt, has_tool_error, resolve_artifacts_dir,
     write_receipt_bundle,
 };

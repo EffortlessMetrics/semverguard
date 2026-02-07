@@ -514,10 +514,12 @@ fn handle_tool_error(
         build_artifact_index(workspace_root, artifacts_root, None, sarif_requested);
 
     // Build capability context indicating failure
+    let git_skipped = !matches!(config.baseline.kind, BaselineKind::Git);
     let capability_ctx = CapabilityContext::new()
         .with_git_available(matches!(config.baseline.kind, BaselineKind::Git))
         .with_baseline_available(false)
-        .with_baseline_detail(format!("error: {err}"));
+        .with_baseline_detail(format!("error: {err}"))
+        .with_git_skipped(git_skipped);
 
     let receipt = build_receipt_with_capabilities(
         None,

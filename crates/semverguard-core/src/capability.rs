@@ -40,10 +40,13 @@ pub fn build_capability_context(
         Some("baseline resolution failed".to_string())
     };
 
+    let git_skipped = !matches!(config.baseline.kind, BaselineKind::Git);
+
     let mut ctx = CapabilityContext::new()
         .with_git_available(git_available)
         .with_baseline_available(baseline_available)
-        .with_shallow_clone(shallow_clone);
+        .with_shallow_clone(shallow_clone)
+        .with_git_skipped(git_skipped);
 
     if let Some(ver) = git_version {
         ctx = ctx.with_git_version(ver);
@@ -94,10 +97,13 @@ mod tests {
 
     #[test]
     fn test_git_unavailable() {
-        let config = SemverguardConfig::default();
+        let mut config = SemverguardConfig::default();
+        config.baseline.kind = BaselineKind::Git;
+        config.baseline.rev = Some("origin/main".to_string());
         let ctx = build_capability_context(&config, &empty_report(), false, false, None);
         let caps = ctx.build();
         assert_eq!(caps.git.status, CapabilityStatus::Unavailable);
+        assert_eq!(caps.git.reason, Some("git_unavailable".to_string()));
     }
 
     #[test]
@@ -111,6 +117,19 @@ mod tests {
         assert_eq!(caps.git.status, CapabilityStatus::Available);
         assert!(caps.git.detail.as_ref().unwrap().contains("shallow clone"));
         assert!(caps.git.detail.as_ref().unwrap().contains("origin/main"));
+    }
+
+    #[test]
+    fn test_crates_io_baseline_skips_git() {
+        let mut config = SemverguardConfig::default();
+        config.baseline.kind = BaselineKind::CratesIo;
+
+        let ctx = build_capability_context(&config, &empty_report(), true, false, None);
+        let caps = ctx.build();
+        assert_eq!(caps.git.status, CapabilityStatus::Skipped);
+        assert_eq!(caps.git.reason, Some("not_required".to_string()));
+        // Baseline should still be available
+        assert_eq!(caps.baseline.status, CapabilityStatus::Available);
     }
 
     #[test]

@@ -4,8 +4,8 @@ use semverguard_core::{
     sarif,
 };
 use semverguard_types::{
-    BaselineConfig, FailureKind, PackageReport, PackageStatus, RequiredBump, RunReport,
-    SemverCheckOutput, Summary,
+    BaselineConfig, FailureKind, OutputFormat, PackageReport, PackageStatus, RequiredBump, RunMode,
+    RunReport, SemverCheckOutput, SemverguardConfig, Summary,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -137,7 +137,7 @@ fn test_receipt_golden_files_and_schema() {
     );
 
     let schema_path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/schema/sensor.report.v1.json");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../contracts/sensor.report.v1.json");
     let schema_str = fs::read_to_string(schema_path).expect("schema should exist");
     let schema_json: serde_json::Value =
         serde_json::from_str(&schema_str).expect("schema should be valid JSON");
@@ -148,4 +148,27 @@ fn test_receipt_golden_files_and_schema() {
         validator.is_valid(&value),
         "receipt should validate against schema"
     );
+}
+
+#[test]
+fn test_cockpit_zero_config_defaults() {
+    // Cockpit mode should force receipt format with zero additional flags
+    let mut cfg = SemverguardConfig::default();
+    cfg.mode = RunMode::Cockpit;
+
+    // Cockpit mode forces receipt format
+    if cfg.mode.is_cockpit() {
+        cfg.output.format = OutputFormat::Receipt;
+    }
+
+    assert!(
+        matches!(cfg.output.format, OutputFormat::Receipt),
+        "Cockpit mode should force receipt format"
+    );
+    assert_eq!(
+        cfg.output.artifacts_dir,
+        PathBuf::from("artifacts/semverguard"),
+        "Default artifacts_dir should be artifacts/semverguard"
+    );
+    assert!(cfg.output.pretty_json, "Default pretty_json should be true");
 }
