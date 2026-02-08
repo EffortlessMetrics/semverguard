@@ -146,8 +146,11 @@
       }
     },
     "summary": {
-      "checked_packages": 2,
+      "packages_total": 3,
+      "packages_checked": 2,
+      "packages_skipped": 1,
       "violations": 1,
+      "baseline_issues": 1,
       "max_required_bump": "major",
       "baseline_kind": "crates-io"
     }

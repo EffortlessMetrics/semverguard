@@ -197,10 +197,16 @@ pub struct FindingLocation {
 /// Summary data promoted for cockpit dashboard display.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryData {
+    /// Total number of packages in the report.
+    pub packages_total: u32,
     /// Number of packages checked (non-skipped).
-    pub checked_packages: u32,
+    pub packages_checked: u32,
+    /// Number of skipped packages.
+    pub packages_skipped: u32,
     /// Number of packages with SemVer violations.
     pub violations: u32,
+    /// Number of packages with baseline errors.
+    pub baseline_issues: u32,
     /// Maximum required bump across all violations (major/minor/patch).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_required_bump: Option<String>,

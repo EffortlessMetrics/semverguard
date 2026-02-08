@@ -938,10 +938,11 @@ fn failure_kind_str(kind: FailureKind) -> &'static str {
     }
 }
 
-/// Extract sort key for findings: (severity_rank, package_name, fingerprint).
+/// Extract sort key for findings.
 ///
-/// Sorts by severity (errors first), then package name, then fingerprint.
-fn finding_sort_key(f: &Finding) -> (u8, String, String) {
+/// Sorts by severity (errors first), then package name, check_id, code,
+/// fingerprint, and message as tiebreakers.
+fn finding_sort_key(f: &Finding) -> (u8, String, String, String, String, String) {
     let package = f
         .data
         .as_ref()
@@ -950,21 +951,42 @@ fn finding_sort_key(f: &Finding) -> (u8, String, String) {
         .unwrap_or("")
         .to_string();
     let fingerprint = f.fingerprint.clone().unwrap_or_default();
-    (f.level.severity_rank(), package, fingerprint)
+    (
+        f.level.severity_rank(),
+        package,
+        f.check_id.clone(),
+        f.code.clone(),
+        fingerprint,
+        f.message.clone(),
+    )
 }
 
 /// Build summary data from a run report and baseline config.
 fn build_summary_data(report: &RunReport, baseline: &BaselineConfig) -> SummaryData {
-    let checked = report
+    let packages_total = report.packages.len() as u32;
+
+    let packages_checked = report
         .packages
         .iter()
         .filter(|p| p.status != PackageStatus::Skipped)
+        .count() as u32;
+
+    let packages_skipped = report
+        .packages
+        .iter()
+        .filter(|p| p.status == PackageStatus::Skipped)
         .count() as u32;
 
     let violations = report
         .packages
         .iter()
         .filter(|p| p.failure_kind == Some(FailureKind::SemverViolation))
+        .count() as u32;
+
+    let baseline_issues = report
+        .packages
+        .iter()
+        .filter(|p| p.failure_kind == Some(FailureKind::BaselineError))
         .count() as u32;
 
     let max_bump = report
@@ -995,8 +1017,11 @@ fn build_summary_data(report: &RunReport, baseline: &BaselineConfig) -> SummaryD
     };
 
     SummaryData {
-        checked_packages: checked,
+        packages_total,
+        packages_checked,
+        packages_skipped,
         violations,
+        baseline_issues,
         max_required_bump: max_bump,
         baseline_kind,
         baseline_ref,
@@ -1158,8 +1183,11 @@ mod tests {
         );
         let data = receipt.data.expect("data should be present");
         let summary = data.summary.expect("summary should be present");
-        assert_eq!(summary.checked_packages, 1); // b-lib is failed (checked), a-lib is skipped
+        assert_eq!(summary.packages_total, 2);
+        assert_eq!(summary.packages_checked, 1); // b-lib is failed (checked), a-lib is skipped
+        assert_eq!(summary.packages_skipped, 1);
         assert_eq!(summary.violations, 1); // b-lib has SemverViolation
+        assert_eq!(summary.baseline_issues, 0);
         assert_eq!(summary.max_required_bump, Some("major".to_string()));
         assert_eq!(summary.baseline_kind, "crates-io");
         assert!(summary.baseline_ref.is_none()); // default baseline has no version
