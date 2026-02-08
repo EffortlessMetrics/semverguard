@@ -72,11 +72,11 @@ SARIF output should be credible, not security theater.
 
 Make installation boring and deterministic.
 
-- [ ] **Prebuilt binaries**
+- [x] **Prebuilt binaries**
   - GitHub Releases for major platforms (linux-x64, macos-x64, macos-arm64, windows-x64)
   - Checksums and signatures
 
-- [ ] **GitHub Action**
+- [x] **GitHub Action**
   - Reusable workflow snippet
   - Pin `cargo-semver-checks` version (MSRV drift protection)
   - Artifact upload and SARIF integration
@@ -101,13 +101,13 @@ Make installation boring and deterministic.
 
 ### Phase 2: Operability
 - [ ] Harden baseline failure taxonomy
-- [ ] Add mode concept (pr/release)
-- [ ] Schema validation tests
-- [ ] Golden output fixtures
+- [x] Add mode concept (pr/release)
+- [x] Schema validation tests
+- [x] Golden output fixtures
 
 ### Phase 3: Distribution
-- [ ] CI workflow for prebuilt binaries
-- [ ] GitHub Action
+- [x] CI workflow for prebuilt binaries
+- [x] GitHub Action
 - [ ] Installation documentation
 
 ### Phase 4: Polish

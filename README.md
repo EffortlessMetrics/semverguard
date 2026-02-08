@@ -47,6 +47,21 @@ Generate SARIF output for GitHub Code Scanning:
 cargo run -p semverguard-cli -- check --sarif results.sarif
 ```
 
+## Installation
+
+### From crates.io
+
+```bash
+cargo install cargo-semver-checks
+cargo install semverguard-cli
+```
+
+### From GitHub Releases
+
+Prebuilt binaries for Linux (x86_64, ARM64), macOS (Intel, Apple Silicon), and Windows are available on the [Releases](https://github.com/EffortlessMetrics/semverguard/releases) page. Each archive includes a `.sha256` checksum file.
+
+For the full installation guide including version pinning, see [Installation & Pinning](docs/src/how-to/install.md).
+
 ## Configuration
 
 By default, `semverguard` looks for `semverguard.toml` in the working directory.
@@ -142,7 +157,7 @@ jobs:
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `mode` | `pr` | `pr` checks changed packages only; `release` checks entire workspace |
+| `mode` | `pr` | `pr` (tolerant), `release` (strict), or `cockpit` (receipt-driven, exit 0) |
 | `baseline-rev` | `origin/main` | Git revision to compare against |
 | `changed` | `true` | Only check packages changed relative to baseline |
 | `json-path` | `semverguard-report.json` | Path for JSON report output |
@@ -195,6 +210,10 @@ If you prefer manual control, here's a full workflow:
   with:
     sarif_file: results.sarif
 ```
+
+### Cockpit integration
+
+For receipt-driven CI orchestration, use `mode: cockpit`. In this mode semverguard always exits 0 and emits a receipt bundle (`sensor.report.v1`). A separate director process reads the receipt and makes the pass/fail decision. See [Cockpit Integration](docs/src/how-to/cockpit-integration.md) for configuration examples and lane policy details.
 
 ### Version pinning
 

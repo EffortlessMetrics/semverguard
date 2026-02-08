@@ -9,6 +9,8 @@ semverguard reads configuration from `semverguard.toml` in the workspace root. A
 ## Complete Example
 
 ```toml
+mode = "auto"
+
 [baseline]
 kind = "git"
 rev = "origin/main"
@@ -45,6 +47,30 @@ warn_as_fail = false
 ```
 
 ## Sections
+
+### `mode`
+
+Top-level setting that controls semverguard's overall behavior. Set before any section:
+
+```toml
+mode = "auto"
+```
+
+| Value | Scope default | Baseline errors | SemVer failures | Exit code |
+|-------|---------------|-----------------|-----------------|-----------|
+| `auto` | detect from environment | warn | exit 2 | standard |
+| `pr` | changed | warn and skip | exit 2 | standard |
+| `release` | workspace | fail | exit 2 | standard |
+| `cockpit` | changed | warn (in receipt) | exit 0 | always 0 (director decides) |
+
+- **`auto`** (default): Detects mode from CI environment variables (`GITHUB_REF`, `CI_COMMIT_TAG`, etc.). Falls back to `pr` behavior.
+- **`pr`**: Optimized for pull request checks. Baseline errors are warnings, not failures.
+- **`release`**: Strict mode for release gates. All baseline errors are fatal.
+- **`cockpit`**: Receipt-driven mode for the cockpit ecosystem. Always exits 0 and emits a receipt bundle. A separate director process reads the receipt and makes the pass/fail decision. See [Cockpit Integration](../how-to/cockpit-integration.md).
+
+CLI override: `--mode <value>`
+
+---
 
 ### `[baseline]`
 
@@ -273,6 +299,8 @@ warn_as_fail = true
 If no `semverguard.toml` exists, these defaults apply:
 
 ```toml
+mode = "auto"
+
 [baseline]
 kind = "crates-io"
 

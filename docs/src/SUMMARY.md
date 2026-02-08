@@ -17,6 +17,8 @@
 - [Configure Monorepos](./how-to/configure-monorepos.md)
 - [Generate JSON Reports](./how-to/generate-json-reports.md)
 - [Use crates.io Baseline](./how-to/use-crates-io-baseline.md)
+- [Installation & Pinning](./how-to/install.md)
+- [Cockpit Integration](./how-to/cockpit-integration.md)
 
 ---
 

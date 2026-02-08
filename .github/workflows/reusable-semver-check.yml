@@ -16,7 +16,7 @@ on:
   workflow_call:
     inputs:
       mode:
-        description: "Check mode: 'pr' or 'release'"
+        description: "Check mode: 'pr' (tolerant), 'release' (strict), or 'cockpit' (receipt-driven, exit 0)"
         required: false
         default: "pr"
         type: string
@@ -131,7 +131,14 @@ jobs:
           SEMVERGUARD="../.semverguard-tool/target/release/semverguard"
           ARGS="check --progress never"
 
-          if [ "${{ inputs.mode }}" = "pr" ] || [ "${{ inputs.changed }}" = "true" ]; then
+          # Pass --mode to CLI
+          MODE="${{ inputs.mode }}"
+          if [ -n "$MODE" ] && [ "$MODE" != "auto" ]; then
+            ARGS="$ARGS --mode $MODE"
+          fi
+
+          # --changed flag
+          if [ "${{ inputs.changed }}" = "true" ]; then
             ARGS="$ARGS --changed"
           fi
 

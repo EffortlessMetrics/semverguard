@@ -42,6 +42,8 @@ semverguard check --sarif results.sarif
 | Configure a monorepo with many crates | [Configure Monorepos](./how-to/configure-monorepos.md) |
 | Generate reports for downstream tools | [Generate JSON Reports](./how-to/generate-json-reports.md) |
 | Compare against published crates.io versions | [Use crates.io Baseline](./how-to/use-crates-io-baseline.md) |
+| Install semverguard and pin versions | [Installation & Pinning](./how-to/install.md) |
+| Integrate with the cockpit ecosystem | [Cockpit Integration](./how-to/cockpit-integration.md) |
 | See all CLI flags and options | [CLI Reference](./reference/cli.md) |
 | Understand the config file format | [Configuration Reference](./reference/config.md) |
 | Parse the JSON output programmatically | [Report Schema](./reference/report-schema.md) |

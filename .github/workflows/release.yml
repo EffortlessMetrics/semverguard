@@ -176,4 +176,6 @@ jobs:
           sleep 30
           cargo publish -p semverguard-engine --allow-dirty || true
           sleep 30
+          cargo publish -p semverguard-core --allow-dirty || true
+          sleep 30
           cargo publish -p semverguard-cli --allow-dirty || true

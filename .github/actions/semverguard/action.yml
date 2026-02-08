@@ -8,7 +8,7 @@ branding:
 
 inputs:
   mode:
-    description: "Check mode: 'pr' checks only changed packages, 'release' checks entire workspace"
+    description: "Check mode: 'pr' (tolerant), 'release' (strict), or 'cockpit' (receipt-driven, exit 0)"
     required: false
     default: "pr"
   baseline-rev:
@@ -126,12 +126,17 @@ runs:
         # Build command arguments
         ARGS="check"
 
-        # Mode handling
+        # Pass --mode to CLI
         MODE="${{ inputs.mode }}"
+        if [ -n "$MODE" ] && [ "$MODE" != "auto" ]; then
+          ARGS="$ARGS --mode $MODE"
+        fi
+
+        # --changed flag
         CHANGED="${{ inputs.changed }}"
         BASELINE_REV="${{ inputs.baseline-rev }}"
 
-        if [ "$MODE" = "pr" ] || [ "$CHANGED" = "true" ]; then
+        if [ "$CHANGED" = "true" ]; then
           ARGS="$ARGS --changed"
         fi
 

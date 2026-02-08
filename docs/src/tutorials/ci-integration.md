@@ -107,6 +107,40 @@ semverguard uses exit codes to integrate with CI systems:
 
 Exit code 2 fails the CI job when breaking changes are detected, providing automatic gatekeeping.
 
+## Run Modes
+
+semverguard supports explicit modes that control how errors and failures are handled:
+
+### PR mode (default)
+
+Tolerant of baseline errors — ideal for pull request checks:
+
+```bash
+semverguard check --mode pr --changed --baseline-rev origin/main
+```
+
+Baseline errors (e.g., shallow clone, missing revision) are warnings, not failures.
+
+### Release mode
+
+Strict — every error is fatal:
+
+```bash
+semverguard check --mode release
+```
+
+Checks the entire workspace against crates.io baselines. Use this for release gates.
+
+### Cockpit mode
+
+Receipt-driven — always exits 0:
+
+```bash
+semverguard check --mode cockpit --changed --baseline-rev origin/main
+```
+
+Emits a receipt bundle for a separate director process to evaluate. See [Cockpit Integration](../how-to/cockpit-integration.md) for details.
+
 ## Caching
 
 Speed up CI runs by caching cargo installations:
