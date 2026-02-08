@@ -116,6 +116,7 @@ pub fn run_with_adapters(
                 &options.workspace_root,
                 Some(&capability_ctx),
                 options.tool_version.as_deref(),
+                &[],
             );
 
             let code = exit_code_from_receipt(
@@ -169,6 +170,7 @@ pub fn run_with_adapters(
         &options.workspace_root,
         Some(&capability_ctx),
         options.tool_version.as_deref(),
+        &options.config.waivers,
     );
 
     let code = if receipt_requested {
@@ -257,6 +259,7 @@ pub fn run(options: &PipelineOptions) -> Result<PipelineResult> {
                 &options.workspace_root,
                 Some(&capability_ctx),
                 options.tool_version.as_deref(),
+                &[],
             );
 
             let code = exit_code_from_receipt(
@@ -315,6 +318,7 @@ pub fn run(options: &PipelineOptions) -> Result<PipelineResult> {
         &options.workspace_root,
         Some(&capability_ctx),
         options.tool_version.as_deref(),
+        &options.config.waivers,
     );
 
     let code = if receipt_requested {

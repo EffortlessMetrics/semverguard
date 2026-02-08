@@ -4,8 +4,9 @@ use globset::Glob;
 use semverguard_core::capability::build_capability_context;
 use semverguard_core::exit_code::exit_code_from_report;
 use semverguard_core::receipt::{
-    CapabilityContext, ToolErrorFinding, build_artifact_index, build_receipt_with_capabilities,
-    exit_code_from_receipt, has_tool_error, resolve_artifacts_dir, write_receipt_bundle,
+    CapabilityContext, ToolErrorFinding, build_artifact_index,
+    build_receipt_with_capabilities_versioned, exit_code_from_receipt, has_tool_error,
+    resolve_artifacts_dir, write_receipt_bundle,
 };
 use semverguard_core::{config, sarif};
 use semverguard_domain::SemverguardRunner;
@@ -43,6 +44,10 @@ enum Commands {
     PrintConfig(PrintConfigArgs),
     /// Validate the configuration file for errors and warnings.
     ValidateConfig(ValidateConfigArgs),
+    /// Explain finding codes and their meanings.
+    Explain(ExplainArgs),
+    /// Promote the baseline revision to a new git ref.
+    PromoteBaseline(PromoteBaselineArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -60,6 +65,36 @@ struct ValidateConfigArgs {
     /// Path to semverguard.toml (defaults to ./semverguard.toml)
     #[arg(long)]
     config: Option<PathBuf>,
+}
+
+#[derive(Parser, Debug)]
+struct ExplainArgs {
+    /// Finding check_id to explain (e.g., "semver", "baseline").
+    check_id: Option<String>,
+    /// Finding code to explain (e.g., "violation", "missing").
+    code: Option<String>,
+    /// Output as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Parser, Debug)]
+struct PromoteBaselineArgs {
+    /// Path to semverguard.toml (defaults to ./semverguard.toml)
+    #[arg(long)]
+    config: Option<PathBuf>,
+
+    /// Workspace root (defaults to .)
+    #[arg(long, default_value = ".")]
+    workspace_root: PathBuf,
+
+    /// Git ref to promote to (defaults to HEAD).
+    #[arg(long, default_value = "HEAD")]
+    rev: String,
+
+    /// Actually write changes (dry-run by default).
+    #[arg(long)]
+    write: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -263,6 +298,14 @@ fn run() -> Result<i32> {
             Ok(0)
         }
         Commands::Check(args) => run_check(&args),
+        Commands::Explain(args) => {
+            run_explain(&args)?;
+            Ok(0)
+        }
+        Commands::PromoteBaseline(args) => {
+            run_promote_baseline(&args)?;
+            Ok(0)
+        }
     }
 }
 
@@ -444,13 +487,15 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
         let capability_ctx =
             build_capability_context(&cfg, &report, git_available, shallow_clone, git_version);
 
-        let receipt = build_receipt_with_capabilities(
+        let receipt = build_receipt_with_capabilities_versioned(
             Some(&report),
             &[],
             &artifact_index,
             &cfg.baseline,
             &args.workspace_root,
             Some(&capability_ctx),
+            None,
+            &cfg.waivers,
         );
 
         // In cockpit mode, exit 0 if receipt write succeeds (even with failures)
@@ -521,13 +566,15 @@ fn handle_tool_error(
         .with_baseline_detail(format!("error: {err}"))
         .with_git_skipped(git_skipped);
 
-    let receipt = build_receipt_with_capabilities(
+    let receipt = build_receipt_with_capabilities_versioned(
         None,
         &errors,
         &artifact_index,
         &config.baseline,
         workspace_root,
         Some(&capability_ctx),
+        None,
+        &config.waivers,
     );
 
     // In cockpit mode, exit 0 if receipt write succeeds (even with tool errors)
@@ -848,6 +895,46 @@ fn validate_config(config: &SemverguardConfig) -> ValidationResult {
         result.add_warning("only_explicit_features is true but features list is empty".to_string());
     }
 
+    // Validate waivers
+    for (i, waiver) in config.waivers.iter().enumerate() {
+        // Check fingerprint format (64-char hex)
+        if waiver.fingerprint.len() != 64
+            || !waiver.fingerprint.chars().all(|c| c.is_ascii_hexdigit())
+        {
+            result.add_error(format!(
+                "waivers[{}].fingerprint must be a 64-character hex string, got: {}",
+                i, waiver.fingerprint
+            ));
+        }
+        // Check reason is not empty
+        if waiver.reason.trim().is_empty() {
+            result.add_error(format!("waivers[{}].reason must not be empty", i));
+        }
+        // Warn on expired waivers
+        if let Some(expires) = &waiver.expires {
+            let parts: Vec<&str> = expires.split('-').collect();
+            if parts.len() == 3 {
+                if let (Ok(y), Ok(m), Ok(d)) = (
+                    parts[0].parse::<i32>(),
+                    parts[1].parse::<u8>(),
+                    parts[2].parse::<u8>(),
+                ) {
+                    if let Ok(month) = time::Month::try_from(m) {
+                        if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
+                            let today = time::OffsetDateTime::now_utc().date();
+                            if today > date {
+                                result.add_warning(format!(
+                                    "waivers[{}].expires ({}) has already passed",
+                                    i, expires
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     result
 }
 
@@ -913,4 +1000,149 @@ fn print_list_text(result: &ListResult) {
     } else {
         println!("Would skip: (none)");
     }
+}
+
+// =============================================================================
+// Explain Command
+// =============================================================================
+
+fn run_explain(args: &ExplainArgs) -> Result<()> {
+    use semverguard_core::explain;
+
+    match (&args.check_id, &args.code) {
+        (None, _) => {
+            // List all finding types
+            if args.json {
+                let entries: Vec<_> = explain::all().iter().map(|e| e.to_json_value()).collect();
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else {
+                println!("Finding types:\n");
+                println!(
+                    "{:<16} {:<16} {:<8} {}",
+                    "CHECK_ID", "CODE", "LEVEL", "TITLE"
+                );
+                println!("{}", "-".repeat(72));
+                for entry in explain::all() {
+                    println!(
+                        "{:<16} {:<16} {:<8} {}",
+                        entry.check_id, entry.code, entry.default_level, entry.title
+                    );
+                }
+            }
+        }
+        (Some(check_id), None) => {
+            // List all findings for a check_id
+            let matches = explain::lookup_by_check_id(check_id);
+            if matches.is_empty() {
+                eprintln!("Unknown check_id: {check_id}");
+                eprintln!("\nValid check_ids:");
+                for entry in explain::all() {
+                    eprintln!("  {}", entry.check_id);
+                }
+                anyhow::bail!("unknown check_id: {check_id}");
+            }
+
+            if args.json {
+                let entries: Vec<_> = matches.iter().map(|e| e.to_json_value()).collect();
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+            } else {
+                for entry in matches {
+                    print_explanation(entry);
+                }
+            }
+        }
+        (Some(check_id), Some(code)) => {
+            // Look up specific finding
+            match explain::lookup(check_id, code) {
+                Some(entry) => {
+                    if args.json {
+                        println!("{}", serde_json::to_string_pretty(&entry.to_json_value())?);
+                    } else {
+                        print_explanation(entry);
+                    }
+                }
+                None => {
+                    eprintln!("Unknown finding: {check_id}/{code}");
+                    eprintln!("\nValid findings:");
+                    for entry in explain::all() {
+                        eprintln!("  {}/{}", entry.check_id, entry.code);
+                    }
+                    anyhow::bail!("unknown finding: {check_id}/{code}");
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn print_explanation(entry: &semverguard_core::explain::FindingExplanation) {
+    println!("{}/{}", entry.check_id, entry.code);
+    println!("  Title: {}", entry.title);
+    println!("  Level: {}", entry.default_level);
+    println!("  Description: {}", entry.description);
+    if !entry.causes.is_empty() {
+        println!("  Common causes:");
+        for cause in entry.causes {
+            println!("    - {cause}");
+        }
+    }
+    if !entry.fixes.is_empty() {
+        println!("  Suggested fixes:");
+        for fix in entry.fixes {
+            println!("    - {fix}");
+        }
+    }
+    println!();
+}
+
+// =============================================================================
+// Promote Baseline Command
+// =============================================================================
+
+fn run_promote_baseline(args: &PromoteBaselineArgs) -> Result<()> {
+    let cfg_path = args
+        .config
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("semverguard.toml"));
+
+    // Check if the current config uses crates-io baseline
+    if cfg_path.exists() {
+        let cfg = config::load_config(&cfg_path)?;
+        if matches!(cfg.baseline.kind, semverguard_types::BaselineKind::CratesIo) {
+            println!("Baseline kind is crates-io.");
+            println!("Crates-io baselines automatically advance when you publish a new version.");
+            println!("No configuration change needed.");
+            return Ok(());
+        }
+    }
+
+    // Resolve the git ref to a full SHA
+    let git = semverguard_git::GitCli::default();
+    let resolved_rev = if args.rev == "HEAD" {
+        git.resolve_head(&args.workspace_root)
+            .context("failed to resolve HEAD - is this a git repository?")?
+    } else {
+        git.resolve_ref(&args.workspace_root, &args.rev)
+            .with_context(|| format!("failed to resolve ref: {}", args.rev))?
+    };
+
+    let result =
+        semverguard_core::promote::promote_git_baseline(&cfg_path, &resolved_rev, args.write)?;
+
+    if result.written {
+        println!("Baseline promoted in {}", cfg_path.display());
+    } else {
+        println!("Dry run (use --write to apply):");
+    }
+
+    println!("  Key:      {}", result.config_key);
+    if let Some(prev) = &result.previous {
+        println!("  Previous: {prev}");
+    } else {
+        println!("  Previous: (not set)");
+    }
+    println!("  New:      {}", result.new_value);
+
+    Ok(())
 }

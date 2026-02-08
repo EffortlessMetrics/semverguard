@@ -388,6 +388,7 @@ fn test_receipt_fail_with_findings_validates_against_schema() {
                 "required_bump": "major"
             })),
             fingerprint: None,
+            waived: None,
         }],
         data: None,
         artifacts: semverguard_types::ArtifactIndex {
@@ -491,6 +492,7 @@ fn test_receipt_all_finding_levels_validate() {
                 location: None,
                 data: None,
                 fingerprint: None,
+                waived: None,
             }],
             data: None,
             artifacts: semverguard_types::ArtifactIndex {
@@ -917,6 +919,34 @@ fn test_package_report_json_structure_is_stable() {
     assert!(engine.get("stdout").is_some());
     assert!(engine.get("stderr").is_some());
     assert!(engine.get("required_bump").is_some());
+}
+
+// =============================================================================
+// Provenance Consistency Tests
+// =============================================================================
+
+#[test]
+fn test_provenance_contract_version_matches_version_file() {
+    let contracts = schema_dir();
+
+    let version_content =
+        fs::read_to_string(contracts.join("VERSION")).expect("contracts/VERSION should exist");
+    let version = version_content.trim();
+
+    let provenance_content = fs::read_to_string(contracts.join("PROVENANCE"))
+        .expect("contracts/PROVENANCE should exist");
+
+    let contract_version = provenance_content
+        .lines()
+        .find_map(|line| line.strip_prefix("contract_version = "))
+        .expect("PROVENANCE should contain contract_version field")
+        .trim();
+
+    assert_eq!(
+        contract_version, version,
+        "contract_version in PROVENANCE ({}) must match VERSION file ({})",
+        contract_version, version
+    );
 }
 
 // =============================================================================

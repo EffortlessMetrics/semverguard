@@ -136,6 +136,9 @@ pub struct Finding {
     /// Enables deterministic deduplication across runs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
+    /// Waiver info if this finding was waived.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub waived: Option<WaiverInfo>,
 }
 
 /// Severity levels for findings.
@@ -148,6 +151,30 @@ pub enum FindingLevel {
     Warning,
     /// Informational finding.
     Info,
+}
+
+impl FindingLevel {
+    /// Returns a numeric rank for sorting: Error=0 (highest severity), Warning=1, Info=2.
+    pub fn severity_rank(&self) -> u8 {
+        match self {
+            FindingLevel::Error => 0,
+            FindingLevel::Warning => 1,
+            FindingLevel::Info => 2,
+        }
+    }
+}
+
+/// Waiver information attached to a finding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WaiverInfo {
+    /// Human-readable reason for the waiver.
+    pub reason: String,
+    /// Optional ticket reference.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ticket: Option<String>,
+    /// Optional expiration date.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
 }
 
 /// Best-effort location information for a finding.
@@ -167,6 +194,23 @@ pub struct FindingLocation {
     pub raw_log: Option<String>,
 }
 
+/// Summary data promoted for cockpit dashboard display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SummaryData {
+    /// Number of packages checked (non-skipped).
+    pub checked_packages: u32,
+    /// Number of packages with SemVer violations.
+    pub violations: u32,
+    /// Maximum required bump across all violations (major/minor/patch).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_required_bump: Option<String>,
+    /// Baseline kind used for comparison.
+    pub baseline_kind: String,
+    /// Baseline reference (rev or version).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub baseline_ref: Option<String>,
+}
+
 /// Semverguard-specific payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SemverguardData {
@@ -178,6 +222,9 @@ pub struct SemverguardData {
     /// Number of findings emitted after truncation (if truncated).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub findings_emitted: Option<usize>,
+    /// Summary data for cockpit dashboards.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<SummaryData>,
 }
 
 /// Artifact index for a receipt.
@@ -269,6 +316,7 @@ mod tests {
                 report,
                 findings_total: None,
                 findings_emitted: None,
+                summary: None,
             }),
             artifacts: ArtifactIndex {
                 report_json: "artifacts/semverguard/report.json".to_string(),
@@ -356,6 +404,7 @@ mod tests {
                 report,
                 findings_total: None,
                 findings_emitted: None,
+                summary: None,
             }),
             artifacts: ArtifactIndex {
                 report_json: "artifacts/semverguard/report.json".to_string(),

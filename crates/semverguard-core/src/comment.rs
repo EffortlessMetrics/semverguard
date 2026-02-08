@@ -127,7 +127,14 @@ pub fn render_comment(receipt: &SensorReportV1) -> String {
             f.level == semverguard_types::FindingLevel::Warning
                 || f.check_id == crate::receipt::CHECK_TOOL
         })
-        .map(|f| format!("- {}: {}", f.check_id, f.message))
+        .map(|f| {
+            let waived_suffix = f
+                .waived
+                .as_ref()
+                .map(|w| format!(" [WAIVED: {}]", w.reason))
+                .unwrap_or_default();
+            format!("- {}: {}{}", f.check_id, f.message, waived_suffix)
+        })
         .collect::<Vec<_>>();
 
     warn_lines.sort();
@@ -248,6 +255,7 @@ mod tests {
             report: minimal_report(packages),
             findings_total: None,
             findings_emitted: None,
+            summary: None,
         });
 
         let comment = render_comment(&receipt);
@@ -279,6 +287,7 @@ mod tests {
             report: minimal_report(packages),
             findings_total: None,
             findings_emitted: None,
+            summary: None,
         });
 
         let comment = render_comment(&receipt);
@@ -298,6 +307,7 @@ mod tests {
             report: minimal_report(packages),
             findings_total: None,
             findings_emitted: None,
+            summary: None,
         });
 
         let comment = render_comment(&receipt);
@@ -317,6 +327,7 @@ mod tests {
             report: minimal_report(packages),
             findings_total: None,
             findings_emitted: None,
+            summary: None,
         });
 
         let comment = render_comment(&receipt);
@@ -335,6 +346,7 @@ mod tests {
             location: None,
             data: None,
             fingerprint: None,
+            waived: None,
         }];
 
         let comment = render_comment(&receipt);
@@ -355,6 +367,7 @@ mod tests {
             report: minimal_report(packages),
             findings_total: None,
             findings_emitted: None,
+            summary: None,
         });
 
         let comment = render_comment(&receipt);
@@ -380,6 +393,7 @@ mod tests {
             report: minimal_report(packages),
             findings_total: None,
             findings_emitted: None,
+            summary: None,
         });
 
         let comment = render_comment(&receipt);
@@ -402,6 +416,7 @@ mod tests {
             report: minimal_report(packages),
             findings_total: None,
             findings_emitted: None,
+            summary: None,
         });
         receipt.artifacts.raw_logs = vec![RawLogRef {
             package: "lib-a".to_string(),
@@ -427,6 +442,7 @@ mod tests {
                 location: None,
                 data: None,
                 fingerprint: None,
+                waived: None,
             },
             Finding {
                 check_id: "tool.runtime".to_string(),
@@ -436,6 +452,7 @@ mod tests {
                 location: None,
                 data: None,
                 fingerprint: None,
+                waived: None,
             },
         ];
 
@@ -457,6 +474,7 @@ mod tests {
             location: None,
             data: None,
             fingerprint: None,
+            waived: None,
         }];
 
         let comment = render_comment(&receipt);
@@ -508,6 +526,7 @@ mod tests {
             report: minimal_report(packages),
             findings_total: None,
             findings_emitted: None,
+            summary: None,
         });
 
         let comment = render_comment(&receipt);

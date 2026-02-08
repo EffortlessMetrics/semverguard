@@ -76,6 +76,18 @@ impl GitCli {
         let output = self.run_git(workspace_root, &["rev-parse", "--is-shallow-repository"])?;
         Ok(output.trim() == "true")
     }
+
+    /// Resolve HEAD to a full commit SHA.
+    pub fn resolve_head(&self, workspace_root: &Path) -> Result<String> {
+        let output = self.run_git(workspace_root, &["rev-parse", "HEAD"])?;
+        Ok(output.trim().to_string())
+    }
+
+    /// Resolve a ref to a full commit SHA.
+    pub fn resolve_ref(&self, workspace_root: &Path, refspec: &str) -> Result<String> {
+        let output = self.run_git(workspace_root, &["rev-parse", refspec])?;
+        Ok(output.trim().to_string())
+    }
 }
 
 impl Default for GitCli {

@@ -20,8 +20,12 @@ pub mod comment;
 pub mod config;
 /// Exit code computation.
 pub mod exit_code;
+/// Finding code explanation registry.
+pub mod explain;
 /// Pipeline orchestration (run checks -> build receipt -> compute exit code).
 pub mod pipeline;
+/// Baseline promotion logic.
+pub mod promote;
 /// Receipt building, fingerprinting, and writing.
 pub mod receipt;
 /// In-memory receipt source for embedders (path filtering and sorting).
@@ -35,8 +39,9 @@ pub use receipt::{
     CAP_REASON_SHALLOW_CLONE, CHECK_BASELINE, CHECK_ENGINE, CHECK_SEMVER, CHECK_TOOL, CODE_ERROR,
     CODE_MISSING, CODE_UNKNOWN, CODE_VIOLATION, CapabilityContext, REASON_ALL_PACKAGES_SKIPPED,
     REASON_BASELINE_UNAVAILABLE, REASON_ENGINE_ERROR, REASON_SEMVER_VIOLATION, REASON_TOOL_ERROR,
-    REASON_TRUNCATED, ToolErrorFinding, build_artifact_index, build_receipt,
-    build_receipt_with_capabilities, exit_code_from_receipt, has_tool_error, resolve_artifacts_dir,
+    REASON_TRUNCATED, REASON_WAIVED, ToolErrorFinding, build_artifact_index, build_receipt,
+    build_receipt_with_capabilities, build_receipt_with_capabilities_versioned,
+    compute_fingerprint, exit_code_from_receipt, has_tool_error, resolve_artifacts_dir,
     write_receipt_bundle,
 };
 pub use receipt_source::{InMemoryReceiptSource, ReceiptEntry};

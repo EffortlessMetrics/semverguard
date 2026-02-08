@@ -147,6 +147,10 @@ pub struct SemverguardConfig {
 
     /// Output/reporting configuration.
     pub output: OutputConfig,
+
+    /// Waivers for intentional breaking changes.
+    #[serde(default)]
+    pub waivers: Vec<WaiverEntry>,
 }
 
 impl Default for SemverguardConfig {
@@ -158,6 +162,7 @@ impl Default for SemverguardConfig {
             features: FeaturesConfig::default(),
             engine: EngineConfig::default(),
             output: OutputConfig::default(),
+            waivers: vec![],
         }
     }
 }
@@ -525,6 +530,25 @@ impl Verbosity {
     pub fn is_quiet(&self) -> bool {
         matches!(self, Verbosity::Quiet)
     }
+}
+
+/// A waiver entry for intentional breaking changes.
+///
+/// Waivers allow known breaking changes to pass CI while maintaining an audit trail.
+/// Each waiver targets a specific finding by its stable fingerprint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WaiverEntry {
+    /// Stable fingerprint of the finding to waive (64-char hex SHA-256).
+    pub fingerprint: String,
+    /// Human-readable reason for the waiver.
+    pub reason: String,
+    /// Optional ticket reference (e.g., "GH#42").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ticket: Option<String>,
+    /// Optional expiration date (ISO8601 date, e.g., "2025-06-01").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
 }
 
 /// Output/reporting configuration.
@@ -1156,5 +1180,40 @@ extra_args = []
         assert!(config.features.baseline_features.is_empty());
         assert!(config.features.current_features.is_empty());
         assert!(config.engine.extra_args.is_empty());
+    }
+
+    #[test]
+    fn test_waiver_config_toml() {
+        let toml_str = r#"
+[[waivers]]
+fingerprint = "d168f6b47520325f9be045d09b02b05e47f7ad212853431c50711c420d3e9635"
+reason = "Intentional API redesign for v2.0"
+ticket = "GH#42"
+expires = "2025-06-01"
+
+[[waivers]]
+fingerprint = "55c6c63ec662ae3c54cafae7d58ad3ed08e5a41be73abc97e54bf6c028945674"
+reason = "Known baseline issue"
+"#;
+        let config: SemverguardConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.waivers.len(), 2);
+        assert_eq!(
+            config.waivers[0].fingerprint,
+            "d168f6b47520325f9be045d09b02b05e47f7ad212853431c50711c420d3e9635"
+        );
+        assert_eq!(
+            config.waivers[0].reason,
+            "Intentional API redesign for v2.0"
+        );
+        assert_eq!(config.waivers[0].ticket, Some("GH#42".to_string()));
+        assert_eq!(config.waivers[0].expires, Some("2025-06-01".to_string()));
+        assert_eq!(config.waivers[1].ticket, None);
+        assert_eq!(config.waivers[1].expires, None);
+    }
+
+    #[test]
+    fn test_no_waivers_default() {
+        let config = SemverguardConfig::default();
+        assert!(config.waivers.is_empty());
     }
 }

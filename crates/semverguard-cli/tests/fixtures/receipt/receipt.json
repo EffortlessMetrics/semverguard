@@ -34,24 +34,6 @@
   },
   "findings": [
     {
-      "check_id": "baseline",
-      "code": "missing",
-      "level": "warning",
-      "message": "Baseline error for `beta` (v0.2.0): baseline not found",
-      "location": {
-        "path": "manifest-beta.toml",
-        "raw_log": "artifacts/semverguard/raw/beta-0.2.0.stderr.log"
-      },
-      "data": {
-        "failure_kind": "baseline-error",
-        "manifest_path": "manifest-beta.toml",
-        "package": "beta",
-        "required_bump": null,
-        "version": "0.2.0"
-      },
-      "fingerprint": "55c6c63ec662ae3c54cafae7d58ad3ed08e5a41be73abc97e54bf6c028945674"
-    },
-    {
       "check_id": "semver",
       "code": "violation",
       "level": "error",
@@ -69,6 +51,24 @@
         "version": "1.0.0"
       },
       "fingerprint": "d168f6b47520325f9be045d09b02b05e47f7ad212853431c50711c420d3e9635"
+    },
+    {
+      "check_id": "baseline",
+      "code": "missing",
+      "level": "warning",
+      "message": "Baseline error for `beta` (v0.2.0): baseline not found",
+      "location": {
+        "path": "manifest-beta.toml",
+        "raw_log": "artifacts/semverguard/raw/beta-0.2.0.stderr.log"
+      },
+      "data": {
+        "failure_kind": "baseline-error",
+        "manifest_path": "manifest-beta.toml",
+        "package": "beta",
+        "required_bump": null,
+        "version": "0.2.0"
+      },
+      "fingerprint": "55c6c63ec662ae3c54cafae7d58ad3ed08e5a41be73abc97e54bf6c028945674"
     }
   ],
   "data": {
@@ -144,6 +144,12 @@
         "failed": 2,
         "skipped": 1
       }
+    },
+    "summary": {
+      "checked_packages": 2,
+      "violations": 1,
+      "max_required_bump": "major",
+      "baseline_kind": "crates-io"
     }
   },
   "artifacts": {

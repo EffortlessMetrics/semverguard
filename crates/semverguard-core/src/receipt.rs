@@ -6,9 +6,10 @@
 use crate::comment;
 use crate::sarif;
 use semverguard_types::{
-    ArtifactIndex, BaselineConfig, CapabilityInfo, CapabilityStatus, FailureKind, Finding,
-    FindingLevel, FindingLocation, PackageReport, PackageStatus, RawLogRef, RequiredBump,
-    RunCapabilities, RunReport, SemverguardData, SensorReportV1, ToolInfo, Verdict, VerdictStatus,
+    ArtifactIndex, BaselineConfig, BaselineKind, CapabilityInfo, CapabilityStatus, FailureKind,
+    Finding, FindingLevel, FindingLocation, PackageReport, PackageStatus, RawLogRef, RequiredBump,
+    RunCapabilities, RunReport, SemverguardData, SensorReportV1, SummaryData, ToolInfo, Verdict,
+    VerdictStatus, WaiverEntry, WaiverInfo,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -54,6 +55,8 @@ pub const REASON_ENGINE_ERROR: &str = "engine_error";
 pub const REASON_TRUNCATED: &str = "truncated";
 /// Verdict reason: all packages were skipped.
 pub const REASON_ALL_PACKAGES_SKIPPED: &str = "all_packages_skipped";
+/// Verdict reason: finding was waived.
+pub const REASON_WAIVED: &str = "waived";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Capability reason tokens
@@ -238,7 +241,12 @@ impl CapabilityContext {
 /// The fingerprint is a 64-character hex string derived from the SHA-256 hash
 /// of the check_id, code, package name, and package version. This enables
 /// deterministic deduplication across runs.
-fn compute_fingerprint(check_id: &str, code: &str, pkg_name: &str, pkg_version: &str) -> String {
+pub fn compute_fingerprint(
+    check_id: &str,
+    code: &str,
+    pkg_name: &str,
+    pkg_version: &str,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"semverguard\0");
     hasher.update(check_id.as_bytes());
@@ -320,10 +328,11 @@ pub fn build_receipt_with_capabilities(
         workspace_root,
         capabilities,
         None,
+        &[],
     )
 }
 
-/// Build a receipt with an optional tool version override.
+/// Build a receipt with an optional tool version override and waivers.
 pub fn build_receipt_with_capabilities_versioned(
     report: Option<&RunReport>,
     errors: &[ToolErrorFinding],
@@ -332,6 +341,7 @@ pub fn build_receipt_with_capabilities_versioned(
     workspace_root: &Path,
     capabilities: Option<&CapabilityContext>,
     tool_version: Option<&str>,
+    waivers: &[WaiverEntry],
 ) -> SensorReportV1 {
     let (run_info, findings_from_report) = match report {
         Some(report) => (
@@ -355,16 +365,13 @@ pub fn build_receipt_with_capabilities_versioned(
             location: None,
             data: None,
             fingerprint: None,
+            waived: None,
         });
     }
 
-    findings.sort_by(|a, b| {
-        (a.check_id.as_str(), a.code.as_str(), a.message.as_str()).cmp(&(
-            b.check_id.as_str(),
-            b.code.as_str(),
-            b.message.as_str(),
-        ))
-    });
+    findings.sort_by(|a, b| finding_sort_key(a).cmp(&finding_sort_key(b)));
+
+    apply_waivers(&mut findings, waivers);
 
     // Truncation signaling (2B)
     let (was_truncated, findings_total, findings_emitted) = if findings.len() > MAX_FINDINGS {
@@ -396,6 +403,7 @@ pub fn build_receipt_with_capabilities_versioned(
             report: r.clone(),
             findings_total,
             findings_emitted,
+            summary: Some(build_summary_data(r, baseline)),
         }),
         artifacts: artifacts.clone(),
     }
@@ -602,6 +610,7 @@ fn build_findings(
             location,
             data,
             fingerprint,
+            waived: None,
         });
     }
 
@@ -671,6 +680,56 @@ fn build_failure_message(pkg: &PackageReport, kind: FailureKind) -> String {
     }
 }
 
+/// Apply waivers to findings by matching fingerprints.
+///
+/// Non-expired waivers with matching fingerprints set the `waived` field on findings.
+fn apply_waivers(findings: &mut [Finding], waivers: &[WaiverEntry]) {
+    if waivers.is_empty() {
+        return;
+    }
+
+    for finding in findings.iter_mut() {
+        if let Some(fp) = &finding.fingerprint {
+            for waiver in waivers {
+                if waiver.fingerprint == *fp && !is_waiver_expired(waiver) {
+                    finding.waived = Some(WaiverInfo {
+                        reason: waiver.reason.clone(),
+                        ticket: waiver.ticket.clone(),
+                        expires: waiver.expires.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Check if a waiver has expired.
+fn is_waiver_expired(waiver: &WaiverEntry) -> bool {
+    match &waiver.expires {
+        None => false,
+        Some(date_str) => {
+            let today = time::OffsetDateTime::now_utc().date();
+            // Try simple YYYY-MM-DD parsing
+            let parts: Vec<&str> = date_str.split('-').collect();
+            if parts.len() == 3 {
+                if let (Ok(y), Ok(m), Ok(d)) = (
+                    parts[0].parse::<i32>(),
+                    parts[1].parse::<u8>(),
+                    parts[2].parse::<u8>(),
+                ) {
+                    if let Ok(month) = time::Month::try_from(m) {
+                        if let Ok(expires_date) = time::Date::from_calendar_date(y, month, d) {
+                            return today > expires_date;
+                        }
+                    }
+                }
+            }
+            false // Can't parse = not expired
+        }
+    }
+}
+
 fn derive_verdict(
     findings: &[Finding],
     report: Option<&RunReport>,
@@ -682,6 +741,10 @@ fn derive_verdict(
     let mut has_baseline = false;
 
     for f in findings {
+        // Skip waived findings for verdict computation
+        if f.waived.is_some() {
+            continue;
+        }
         match f.check_id.as_str() {
             CHECK_TOOL => has_tool = true,
             CHECK_BASELINE => has_baseline = true,
@@ -690,6 +753,8 @@ fn derive_verdict(
             _ => {}
         }
     }
+
+    let has_waived = findings.iter().any(|f| f.waived.is_some());
 
     let mut reasons = Vec::new();
     if has_semver {
@@ -713,6 +778,9 @@ fn derive_verdict(
         .unwrap_or(false);
     if all_skipped {
         reasons.push(REASON_ALL_PACKAGES_SKIPPED.to_string());
+    }
+    if has_waived {
+        reasons.push(REASON_WAIVED.to_string());
     }
 
     // Status determined by priority
@@ -870,6 +938,71 @@ fn failure_kind_str(kind: FailureKind) -> &'static str {
     }
 }
 
+/// Extract sort key for findings: (severity_rank, package_name, fingerprint).
+///
+/// Sorts by severity (errors first), then package name, then fingerprint.
+fn finding_sort_key(f: &Finding) -> (u8, String, String) {
+    let package = f
+        .data
+        .as_ref()
+        .and_then(|d| d.get("package"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let fingerprint = f.fingerprint.clone().unwrap_or_default();
+    (f.level.severity_rank(), package, fingerprint)
+}
+
+/// Build summary data from a run report and baseline config.
+fn build_summary_data(report: &RunReport, baseline: &BaselineConfig) -> SummaryData {
+    let checked = report
+        .packages
+        .iter()
+        .filter(|p| p.status != PackageStatus::Skipped)
+        .count() as u32;
+
+    let violations = report
+        .packages
+        .iter()
+        .filter(|p| p.failure_kind == Some(FailureKind::SemverViolation))
+        .count() as u32;
+
+    let max_bump = report
+        .packages
+        .iter()
+        .filter_map(|p| p.inferred_required_bump)
+        .max_by_key(|b| match b {
+            RequiredBump::Major => 3,
+            RequiredBump::Minor => 2,
+            RequiredBump::Patch => 1,
+            RequiredBump::Unknown => 0,
+        })
+        .map(|b| match b {
+            RequiredBump::Major => "major".to_string(),
+            RequiredBump::Minor => "minor".to_string(),
+            RequiredBump::Patch => "patch".to_string(),
+            RequiredBump::Unknown => "unknown".to_string(),
+        });
+
+    let baseline_kind = match baseline.kind {
+        BaselineKind::Git => "git".to_string(),
+        BaselineKind::CratesIo => "crates-io".to_string(),
+    };
+
+    let baseline_ref = match baseline.kind {
+        BaselineKind::Git => baseline.rev.clone(),
+        BaselineKind::CratesIo => baseline.version.clone(),
+    };
+
+    SummaryData {
+        checked_packages: checked,
+        violations,
+        max_required_bump: max_bump,
+        baseline_kind,
+        baseline_ref,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -967,10 +1100,69 @@ mod tests {
             let a = &window[0];
             let b = &window[1];
             assert!(
-                (a.check_id.as_str(), a.code.as_str(), a.message.as_str())
-                    <= (b.check_id.as_str(), b.code.as_str(), b.message.as_str())
+                finding_sort_key(a) <= finding_sort_key(b),
+                "Findings should be sorted by severity, then package, then fingerprint"
             );
         }
+    }
+
+    #[test]
+    fn test_finding_level_severity_rank() {
+        assert_eq!(FindingLevel::Error.severity_rank(), 0);
+        assert_eq!(FindingLevel::Warning.severity_rank(), 1);
+        assert_eq!(FindingLevel::Info.severity_rank(), 2);
+    }
+
+    #[test]
+    fn test_findings_sorted_severity_then_package() {
+        // Create a report with both semver violation (error) and baseline error (warning)
+        let report = sample_report(); // has b-lib (error/violation) and a-lib is skipped
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            Path::new("artifacts/semverguard"),
+            Some(&report),
+            false,
+        );
+        let receipt = build_receipt(
+            Some(&report),
+            &[],
+            &artifacts,
+            &BaselineConfig::default(),
+            report.workspace_root.as_path(),
+        );
+        // With severity-first sort, errors come before warnings
+        if receipt.findings.len() >= 2 {
+            assert!(
+                receipt.findings[0].level.severity_rank()
+                    <= receipt.findings[1].level.severity_rank(),
+                "Errors should sort before warnings"
+            );
+        }
+    }
+
+    #[test]
+    fn test_summary_data_populated() {
+        let report = sample_report();
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            Path::new("artifacts/semverguard"),
+            Some(&report),
+            false,
+        );
+        let receipt = build_receipt(
+            Some(&report),
+            &[],
+            &artifacts,
+            &BaselineConfig::default(),
+            report.workspace_root.as_path(),
+        );
+        let data = receipt.data.expect("data should be present");
+        let summary = data.summary.expect("summary should be present");
+        assert_eq!(summary.checked_packages, 1); // b-lib is failed (checked), a-lib is skipped
+        assert_eq!(summary.violations, 1); // b-lib has SemverViolation
+        assert_eq!(summary.max_required_bump, Some("major".to_string()));
+        assert_eq!(summary.baseline_kind, "crates-io");
+        assert!(summary.baseline_ref.is_none()); // default baseline has no version
     }
 
     #[test]
@@ -1148,6 +1340,7 @@ mod tests {
             REASON_ENGINE_ERROR,
             REASON_TRUNCATED,
             REASON_ALL_PACKAGES_SKIPPED,
+            REASON_WAIVED,
             CAP_REASON_GIT_UNAVAILABLE,
             CAP_REASON_SHALLOW_CLONE,
             CAP_REASON_RESOLUTION_FAILED,
@@ -1319,5 +1512,76 @@ mod tests {
         let caps = ctx.build();
         assert_eq!(caps.baseline.status, CapabilityStatus::Skipped);
         assert_eq!(caps.baseline.reason, Some("not_required".to_string()));
+    }
+
+    #[test]
+    fn test_waiver_applied_by_fingerprint() {
+        use semverguard_types::WaiverEntry;
+        let report = sample_report();
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            Path::new("artifacts/semverguard"),
+            Some(&report),
+            false,
+        );
+        // The sample report has b-lib with SemverViolation
+        let fp = compute_fingerprint("semver", "violation", "b-lib", "2.0.0");
+        let waivers = vec![WaiverEntry {
+            fingerprint: fp.clone(),
+            reason: "Intentional break".to_string(),
+            ticket: Some("GH#1".to_string()),
+            expires: None,
+        }];
+        let receipt = build_receipt_with_capabilities_versioned(
+            Some(&report),
+            &[],
+            &artifacts,
+            &BaselineConfig::default(),
+            report.workspace_root.as_path(),
+            None,
+            None,
+            &waivers,
+        );
+        // The finding should be waived
+        let waived_finding = receipt
+            .findings
+            .iter()
+            .find(|f| f.fingerprint.as_deref() == Some(&fp));
+        assert!(waived_finding.is_some());
+        let waived = waived_finding.unwrap().waived.as_ref().unwrap();
+        assert_eq!(waived.reason, "Intentional break");
+        assert_eq!(waived.ticket, Some("GH#1".to_string()));
+    }
+
+    #[test]
+    fn test_waived_findings_skip_verdict() {
+        use semverguard_types::WaiverEntry;
+        let report = sample_report();
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            Path::new("artifacts/semverguard"),
+            Some(&report),
+            false,
+        );
+        let fp = compute_fingerprint("semver", "violation", "b-lib", "2.0.0");
+        let waivers = vec![WaiverEntry {
+            fingerprint: fp,
+            reason: "Intentional".to_string(),
+            ticket: None,
+            expires: None,
+        }];
+        let receipt = build_receipt_with_capabilities_versioned(
+            Some(&report),
+            &[],
+            &artifacts,
+            &BaselineConfig::default(),
+            report.workspace_root.as_path(),
+            None,
+            None,
+            &waivers,
+        );
+        // Verdict should NOT be Fail since the semver violation is waived
+        assert_ne!(receipt.verdict.status, VerdictStatus::Fail);
+        assert!(receipt.verdict.reasons.contains(&"waived".to_string()));
     }
 }

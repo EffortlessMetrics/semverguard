@@ -65,3 +65,45 @@ jobs:
           sarif-path: semverguard.sarif
           upload-sarif: "true"
           cargo-semver-checks-version: "0.35.0"
+
+  contract-guard:
+    name: Contract Guard
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check contract provenance
+        run: |
+          CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.sha }} -- contracts/)
+          if [ -z "$CHANGED" ]; then
+            echo "No contracts/ files changed. Skipping."
+            exit 0
+          fi
+
+          echo "Changed contracts files:"
+          echo "$CHANGED"
+
+          if ! echo "$CHANGED" | grep -q "^contracts/PROVENANCE$"; then
+            echo "::error::contracts/ files were modified but contracts/PROVENANCE was not updated."
+            echo "Please update contracts/PROVENANCE with the current sync metadata."
+            exit 1
+          fi
+
+          # Validate required fields in PROVENANCE
+          PROVENANCE="contracts/PROVENANCE"
+          MISSING=""
+          for field in source_repo upstream_sha synced_at; do
+            if ! grep -q "^${field} = " "$PROVENANCE"; then
+              MISSING="$MISSING $field"
+            fi
+          done
+
+          if [ -n "$MISSING" ]; then
+            echo "::error::contracts/PROVENANCE is missing required fields:$MISSING"
+            exit 1
+          fi
+
+          echo "Contract provenance check passed."
