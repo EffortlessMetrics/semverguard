@@ -273,12 +273,16 @@ pub fn create_progress_reporter(choice: ProgressChoice) -> Box<dyn ProgressRepor
         ProgressChoice::Never => Box::new(NoopProgress::new()),
         ProgressChoice::Always => Box::new(TerminalProgress::new()),
         ProgressChoice::Auto => {
-            if std::io::stderr().is_terminal() {
-                Box::new(TerminalProgress::new())
-            } else {
-                Box::new(LineProgress::new())
-            }
+            auto_progress_reporter(std::io::stderr().is_terminal())
         }
+    }
+}
+
+fn auto_progress_reporter(is_terminal: bool) -> Box<dyn ProgressReporter> {
+    if is_terminal {
+        Box::new(TerminalProgress::new())
+    } else {
+        Box::new(LineProgress::new())
     }
 }
 
@@ -348,6 +352,8 @@ impl semverguard_domain::ProgressCallback for ProgressCallbackAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+    use semverguard_domain::ProgressCallback;
 
     #[test]
     fn test_progress_choice_default() {
@@ -370,5 +376,191 @@ mod tests {
         });
         progress.finish();
         // No assertions needed - just verify it doesn't panic
+    }
+
+    #[test]
+    fn test_line_progress_reports_events() {
+        let progress = LineProgress::new();
+        progress.report(ProgressEvent::TotalPackages(3));
+        progress.report(ProgressEvent::PackageStarted {
+            name: "alpha",
+            index: 0,
+            total: 3,
+        });
+        progress.report(ProgressEvent::PackageCompleted {
+            name: "alpha",
+            status: PackageStatus::Passed,
+            duration_ms: 1200,
+        });
+        progress.report(ProgressEvent::PackageCompleted {
+            name: "beta",
+            status: PackageStatus::Failed,
+            duration_ms: 800,
+        });
+        progress.report(ProgressEvent::PackageCompleted {
+            name: "gamma",
+            status: PackageStatus::Skipped,
+            duration_ms: 10,
+        });
+        progress.report(ProgressEvent::PackageSkipped {
+            name: "delta",
+            reason: "filtered",
+        });
+        progress.report(ProgressEvent::Finished {
+            passed: 1,
+            failed: 1,
+            skipped: 1,
+        });
+        progress.finish();
+    }
+
+    #[test]
+    fn test_terminal_progress_reports_events() {
+        let progress = TerminalProgress::new();
+        progress.report(ProgressEvent::TotalPackages(2));
+        progress.report(ProgressEvent::PackageStarted {
+            name: "alpha",
+            index: 0,
+            total: 2,
+        });
+        progress.report(ProgressEvent::PackageCompleted {
+            name: "alpha",
+            status: PackageStatus::Passed,
+            duration_ms: 500,
+        });
+        progress.report(ProgressEvent::PackageStarted {
+            name: "beta",
+            index: 1,
+            total: 2,
+        });
+        progress.report(ProgressEvent::PackageCompleted {
+            name: "beta",
+            status: PackageStatus::Failed,
+            duration_ms: 250,
+        });
+        progress.report(ProgressEvent::PackageSkipped {
+            name: "gamma",
+            reason: "not publishable",
+        });
+        progress.report(ProgressEvent::Finished {
+            passed: 1,
+            failed: 1,
+            skipped: 0,
+        });
+        progress.finish();
+    }
+
+    #[test]
+    fn test_create_progress_reporter_choices() {
+        let reporter = create_progress_reporter(ProgressChoice::Never);
+        reporter.report(ProgressEvent::TotalPackages(1));
+
+        let reporter = create_progress_reporter(ProgressChoice::Always);
+        reporter.report(ProgressEvent::TotalPackages(1));
+
+        let reporter = create_progress_reporter(ProgressChoice::Auto);
+        reporter.report(ProgressEvent::TotalPackages(1));
+    }
+
+    #[test]
+    fn test_auto_progress_reporter_branches() {
+        let reporter = auto_progress_reporter(true);
+        reporter.report(ProgressEvent::TotalPackages(1));
+
+        let reporter = auto_progress_reporter(false);
+        reporter.report(ProgressEvent::TotalPackages(1));
+    }
+
+    #[test]
+    fn test_progress_defaults_construct() {
+        let _noop = NoopProgress::default();
+        let _line = LineProgress::default();
+        let _terminal = TerminalProgress::default();
+    }
+
+    #[test]
+    fn test_terminal_progress_reports_skipped_status() {
+        let progress = TerminalProgress::new();
+        progress.report(ProgressEvent::PackageCompleted {
+            name: "skippy",
+            status: PackageStatus::Skipped,
+            duration_ms: 5,
+        });
+        progress.finish();
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingReporter {
+        events: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl ProgressReporter for RecordingReporter {
+        fn report(&self, event: ProgressEvent<'_>) {
+            let label = match event {
+                ProgressEvent::TotalPackages(total) => format!("total:{total}"),
+                ProgressEvent::PackageStarted { name, .. } => format!("start:{name}"),
+                ProgressEvent::PackageCompleted { name, status, .. } => {
+                    format!("done:{name}:{status:?}")
+                }
+                ProgressEvent::PackageSkipped { name, reason } => {
+                    format!("skip:{name}:{reason}")
+                }
+                ProgressEvent::Finished { passed, failed, skipped } => {
+                    format!("finished:{passed}:{failed}:{skipped}")
+                }
+            };
+            self.events.lock().expect("lock").push(label);
+        }
+
+        fn finish(&self) {
+            self.events.lock().expect("lock").push("finish".to_string());
+        }
+    }
+
+    #[test]
+    fn test_progress_callback_adapter_maps_events() {
+        let reporter = RecordingReporter::default();
+        let adapter = ProgressCallbackAdapter::new(Box::new(reporter.clone()));
+
+        adapter.on_progress(semverguard_domain::ProgressEvent::TotalPackages { total: 2 });
+        adapter.on_progress(semverguard_domain::ProgressEvent::PackageStarted {
+            name: "alpha".to_string(),
+            index: 0,
+            total: 2,
+        });
+        adapter.on_progress(semverguard_domain::ProgressEvent::PackageCompleted {
+            name: "alpha".to_string(),
+            status: PackageStatus::Passed,
+            duration_ms: 10,
+        });
+        adapter.on_progress(semverguard_domain::ProgressEvent::PackageSkipped {
+            name: "beta".to_string(),
+            reason: "filtered".to_string(),
+        });
+        adapter.on_progress(semverguard_domain::ProgressEvent::Finished {
+            passed: 1,
+            failed: 0,
+            skipped: 1,
+        });
+
+        let events = reporter.events.lock().expect("lock").clone();
+        assert_eq!(
+            events,
+            vec![
+                "total:2",
+                "start:alpha",
+                "done:alpha:Passed",
+                "skip:beta:filtered",
+                "finished:1:0:1",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_recording_reporter_finish() {
+        let reporter = RecordingReporter::default();
+        reporter.finish();
+        let events = reporter.events.lock().expect("lock").clone();
+        assert_eq!(events, vec!["finish"]);
     }
 }

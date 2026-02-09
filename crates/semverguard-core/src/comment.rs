@@ -535,13 +535,86 @@ mod tests {
         let beta_pos = comment.find("beta").unwrap();
         let zebra_pos = comment.find("zebra").unwrap();
 
-        assert!(
-            alpha_pos < beta_pos,
-            "alpha should come before beta in sorted output"
-        );
-        assert!(
-            beta_pos < zebra_pos,
-            "beta should come before zebra in sorted output"
-        );
+        assert!(alpha_pos < beta_pos, "alpha should come before beta in sorted output");
+        assert!(beta_pos < zebra_pos, "beta should come before zebra in sorted output");
+    }
+
+    #[test]
+    fn test_failed_packages_excludes_tool_and_baseline_errors() {
+        let mut semver_pkg = make_package("alpha", "1.0.0", PackageStatus::Failed);
+        semver_pkg.failure_kind = Some(FailureKind::SemverViolation);
+        let mut baseline_pkg = make_package("beta", "1.0.0", PackageStatus::Failed);
+        baseline_pkg.failure_kind = Some(FailureKind::BaselineError);
+        let mut tool_pkg = make_package("gamma", "1.0.0", PackageStatus::Failed);
+        tool_pkg.failure_kind = Some(FailureKind::ToolError);
+
+        let packages = vec![semver_pkg, baseline_pkg, tool_pkg];
+        let mut receipt = minimal_receipt();
+        receipt.verdict.status = VerdictStatus::Fail;
+        receipt.data = Some(SemverguardData {
+            report: minimal_report(packages),
+            findings_total: None,
+            findings_emitted: None,
+            summary: None,
+        });
+
+        let comment = render_comment(&receipt);
+
+        assert!(comment.contains("alpha 1.0.0"));
+        assert!(!comment.contains("beta 1.0.0"));
+        assert!(!comment.contains("gamma 1.0.0"));
+    }
+
+    #[test]
+    fn snapshot_render_comment_mixed() {
+        let packages = vec![
+            make_package("gamma", "0.1.0", PackageStatus::Passed),
+            make_package("alpha", "1.2.3", PackageStatus::Failed),
+            make_package("beta", "0.9.0", PackageStatus::Skipped),
+        ];
+        let mut receipt = minimal_receipt();
+        receipt.verdict.status = VerdictStatus::Fail;
+        receipt.data = Some(SemverguardData {
+            report: minimal_report(packages),
+            findings_total: None,
+            findings_emitted: None,
+            summary: None,
+        });
+        receipt.artifacts.raw_logs = vec![RawLogRef {
+            package: "alpha".to_string(),
+            version: "1.2.3".to_string(),
+            stdout: None,
+            stderr: Some("raw/alpha.stderr.log".to_string()),
+        }];
+        receipt.findings = vec![
+            Finding {
+                check_id: "tool.runtime".to_string(),
+                code: "engine-failed".to_string(),
+                level: FindingLevel::Error,
+                message: "cargo-semver-checks failed".to_string(),
+                location: None,
+                data: None,
+                fingerprint: None,
+                waived: None,
+            },
+            Finding {
+                check_id: "lint.api".to_string(),
+                code: "public-api".to_string(),
+                level: FindingLevel::Warning,
+                message: "public API changed".to_string(),
+                location: None,
+                data: None,
+                fingerprint: None,
+                waived: Some(semverguard_types::WaiverInfo {
+                    reason: "legacy".to_string(),
+                    ticket: None,
+                    expires: None,
+                }),
+            },
+        ];
+
+        let comment = render_comment(&receipt);
+
+        insta::assert_snapshot!(comment);
     }
 }

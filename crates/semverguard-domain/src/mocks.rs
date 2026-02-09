@@ -80,17 +80,8 @@ impl MockWorkspaceProvider {
     /// Assert that `load` was called exactly once with the expected root.
     pub fn assert_called_once_with(&self, expected_root: &Path) {
         let calls = self.calls.lock().unwrap();
-        assert_eq!(
-            calls.len(),
-            1,
-            "Expected exactly 1 call, got {}",
-            calls.len()
-        );
-        assert_eq!(
-            calls[0].workspace_root, expected_root,
-            "Expected workspace_root {:?}, got {:?}",
-            expected_root, calls[0].workspace_root
-        );
+        assert_eq!(calls.len(), 1, "Expected exactly 1 call, got {}", calls.len());
+        assert_eq!(calls[0].workspace_root, expected_root, "Expected workspace_root {:?}, got {:?}", expected_root, calls[0].workspace_root);
     }
 
     /// Set a new result to return on the next call.
@@ -193,27 +184,10 @@ impl MockGitProvider {
         expected_head: &str,
     ) {
         let calls = self.calls.lock().unwrap();
-        assert_eq!(
-            calls.len(),
-            1,
-            "Expected exactly 1 call, got {}",
-            calls.len()
-        );
-        assert_eq!(
-            calls[0].workspace_root, expected_root,
-            "Expected workspace_root {:?}, got {:?}",
-            expected_root, calls[0].workspace_root
-        );
-        assert_eq!(
-            calls[0].base, expected_base,
-            "Expected base {:?}, got {:?}",
-            expected_base, calls[0].base
-        );
-        assert_eq!(
-            calls[0].head, expected_head,
-            "Expected head {:?}, got {:?}",
-            expected_head, calls[0].head
-        );
+        assert_eq!(calls.len(), 1, "Expected exactly 1 call, got {}", calls.len());
+        assert_eq!(calls[0].workspace_root, expected_root, "Expected workspace_root {:?}, got {:?}", expected_root, calls[0].workspace_root);
+        assert_eq!(calls[0].base, expected_base, "Expected base {:?}, got {:?}", expected_base, calls[0].base);
+        assert_eq!(calls[0].head, expected_head, "Expected head {:?}, got {:?}", expected_head, calls[0].head);
     }
 
     /// Set a new result to return on the next call.
@@ -375,11 +349,7 @@ impl MockSemverEngine {
     /// Assert that `check` was called exactly N times.
     pub fn assert_call_count(&self, expected: usize) {
         let actual = self.call_count();
-        assert_eq!(
-            actual, expected,
-            "Expected {} calls, got {}",
-            expected, actual
-        );
+        assert_eq!(actual, expected, "Expected {} calls, got {}", expected, actual);
     }
 
     /// Assert that `check` was not called.
@@ -468,6 +438,13 @@ mod tests {
     }
 
     #[test]
+    fn test_mock_workspace_provider_default_is_empty() {
+        let provider = MockWorkspaceProvider::default();
+        let result = provider.load(Path::new("/workspace")).unwrap();
+        assert!(result.packages.is_empty());
+    }
+
+    #[test]
     fn test_mock_workspace_provider_records_calls() {
         let provider = MockWorkspaceProvider::empty("/test");
 
@@ -509,6 +486,15 @@ mod tests {
     }
 
     #[test]
+    fn test_mock_git_provider_default_no_changes() {
+        let provider = MockGitProvider::default();
+        let result = provider
+            .changed_paths(Path::new("/workspace"), "origin/main", "HEAD")
+            .unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
     fn test_mock_git_provider_records_calls() {
         let provider = MockGitProvider::no_changes();
 
@@ -528,6 +514,22 @@ mod tests {
         let _ = provider.changed_paths(Path::new("/ws"), "origin/main", "HEAD");
 
         provider.assert_called_once_with(Path::new("/ws"), "origin/main", "HEAD");
+    }
+
+    #[test]
+    fn test_mock_workspace_provider_assert_called_once_with() {
+        let provider = MockWorkspaceProvider::empty("/test");
+        let _ = provider.load(Path::new("/ws"));
+        provider.assert_called_once_with(Path::new("/ws"));
+    }
+
+    #[test]
+    fn test_mock_git_provider_with_error() {
+        let provider = MockGitProvider::with_error("no git");
+        let err = provider
+            .changed_paths(Path::new("/ws"), "origin/main", "HEAD")
+            .unwrap_err();
+        assert!(err.to_string().contains("no git"));
     }
 
     #[test]
@@ -551,6 +553,31 @@ mod tests {
         assert!(!output.success);
         assert_eq!(output.exit_code, Some(1));
         assert!(output.stderr.contains("breaking change"));
+    }
+
+    #[test]
+    fn test_mock_semver_engine_default_and_calls() {
+        let engine = MockSemverEngine::default();
+        let request = make_test_request();
+        let _ = engine.check(request).unwrap();
+        let calls = engine.calls();
+        assert_eq!(calls.len(), 1);
+    }
+
+    #[test]
+    fn test_mock_semver_engine_with_error() {
+        let engine = MockSemverEngine::with_error("boom");
+        let request = make_test_request();
+        let err = engine.check(request).unwrap_err();
+        assert!(err.to_string().contains("configured error"));
+    }
+
+    #[test]
+    fn test_mock_semver_engine_no_result_configured() {
+        let engine = MockSemverEngine::with_results(vec![]);
+        let request = make_test_request();
+        let err = engine.check(request).unwrap_err();
+        assert!(err.to_string().contains("no result configured"));
     }
 
     #[test]
@@ -626,6 +653,46 @@ mod tests {
         assert_eq!(packages.len(), 2);
         assert!(packages.contains(&PathBuf::from("/ws/crates/foo/Cargo.toml")));
         assert!(packages.contains(&PathBuf::from("/ws/crates/bar/Cargo.toml")));
+    }
+
+    #[test]
+    fn test_mock_semver_engine_queue_and_default_errors() {
+        let engine = MockSemverEngine::with_results(vec![Ok((
+            vec!["--first".into()],
+            SemverCheckOutput {
+                exit_code: Some(0),
+                success: true,
+                stdout: String::new(),
+                stderr: String::new(),
+                required_bump: None,
+            },
+        ))]);
+        engine.push_output(
+            vec!["--second".into()],
+            SemverCheckOutput {
+                exit_code: Some(1),
+                success: false,
+                stdout: String::new(),
+                stderr: "boom".to_string(),
+                required_bump: None,
+            },
+        );
+        engine.set_default(Err(SemverguardError::Engine("default".into())));
+
+        let (args1, _) = engine.check(make_test_request()).unwrap();
+        assert_eq!(args1, vec!["--first"]);
+
+        let (args2, _) = engine.check(make_test_request()).unwrap();
+        assert_eq!(args2, vec!["--second"]);
+
+        let err = engine.check(make_test_request()).unwrap_err();
+        assert!(err.to_string().contains("configured error"));
+    }
+
+    #[test]
+    fn test_mock_semver_engine_assert_not_called() {
+        let engine = MockSemverEngine::success();
+        engine.assert_not_called();
     }
 
     fn make_test_request() -> SemverCheckRequest {

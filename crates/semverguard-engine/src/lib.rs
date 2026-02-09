@@ -131,6 +131,11 @@ impl SemverEngine for CargoSemverChecksEngine {
 mod tests {
     use super::*;
     use semverguard_types::{BaselineConfig, BaselineKind, FeaturesConfig};
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     // =========================================================================
     // Helper to create a minimal SemverCheckRequest for testing
@@ -149,6 +154,39 @@ mod tests {
             extra_args: vec![],
             timeout: None,
         }
+    }
+
+    struct FakeCargo {
+        _dir: TempDir,
+        path: PathBuf,
+    }
+
+    fn write_fake_cargo(exit_code: i32) -> FakeCargo {
+        let dir = tempfile::tempdir().expect("tempdir");
+        #[cfg(windows)]
+        let path = dir.path().join("fake_cargo.cmd");
+        #[cfg(not(windows))]
+        let path = dir.path().join("fake_cargo.sh");
+
+        #[cfg(windows)]
+        let script = format!(
+            "@echo off\r\necho Major version bump required.\r\necho stderr line 1>&2\r\nexit /b {exit_code}\r\n"
+        );
+        #[cfg(not(windows))]
+        let script = format!(
+            "#!/bin/sh\necho \"Major version bump required.\"\necho \"stderr line\" 1>&2\nexit {exit_code}\n"
+        );
+
+        fs::write(&path, script).expect("write fake cargo script");
+
+        #[cfg(unix)]
+        {
+            let mut perms = fs::metadata(&path).expect("metadata").permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&path, perms).expect("set permissions");
+        }
+
+        FakeCargo { _dir: dir, path }
     }
 
     // =========================================================================
@@ -189,13 +227,10 @@ mod tests {
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
         let manifest_idx = args.iter().position(|a| a == "--manifest-path");
-        assert!(manifest_idx.is_some(), "should have --manifest-path flag");
+        assert!(manifest_idx.is_some());
 
         let idx = manifest_idx.unwrap();
-        assert!(
-            idx + 1 < args.len(),
-            "should have value after --manifest-path"
-        );
+        assert!(idx + 1 < args.len());
         assert_eq!(args[idx + 1], "/workspace/crates/mylib/Cargo.toml");
     }
 
@@ -218,10 +253,7 @@ mod tests {
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
         // Should not have --baseline-version if version is None
-        assert!(
-            !args.contains(&"--baseline-version".to_string()),
-            "should not have --baseline-version without version"
-        );
+        assert!(!args.contains(&"--baseline-version".to_string()));
     }
 
     #[test]
@@ -239,7 +271,7 @@ mod tests {
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
         let version_idx = args.iter().position(|a| a == "--baseline-version");
-        assert!(version_idx.is_some(), "should have --baseline-version flag");
+        assert!(version_idx.is_some());
 
         let idx = version_idx.unwrap();
         assert_eq!(args[idx + 1], "1.2.3");
@@ -263,10 +295,7 @@ mod tests {
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
-        assert!(
-            !args.contains(&"--baseline-rev".to_string()),
-            "should not have --baseline-rev without rev"
-        );
+        assert!(!args.contains(&"--baseline-rev".to_string()));
     }
 
     #[test]
@@ -284,7 +313,7 @@ mod tests {
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
         let rev_idx = args.iter().position(|a| a == "--baseline-rev");
-        assert!(rev_idx.is_some(), "should have --baseline-rev flag");
+        assert!(rev_idx.is_some());
 
         let idx = rev_idx.unwrap();
         assert_eq!(args[idx + 1], "origin/main");
@@ -347,7 +376,7 @@ mod tests {
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
         let root_idx = args.iter().position(|a| a == "--baseline-root");
-        assert!(root_idx.is_some(), "should have --baseline-root flag");
+        assert!(root_idx.is_some());
 
         let idx = root_idx.unwrap();
         assert_eq!(args[idx + 1], "/other/workspace");
@@ -368,7 +397,7 @@ mod tests {
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
         let rustdoc_idx = args.iter().position(|a| a == "--baseline-rustdoc");
-        assert!(rustdoc_idx.is_some(), "should have --baseline-rustdoc flag");
+        assert!(rustdoc_idx.is_some());
 
         let idx = rustdoc_idx.unwrap();
         assert_eq!(args[idx + 1], "/cached/rustdoc.json");
@@ -411,10 +440,7 @@ mod tests {
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
-        assert!(
-            args.contains(&"--all-features".to_string()),
-            "should have --all-features flag"
-        );
+        assert!(args.contains(&"--all-features".to_string()));
     }
 
     #[test]
@@ -431,10 +457,7 @@ mod tests {
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
-        assert!(
-            args.contains(&"--default-features".to_string()),
-            "should have --default-features flag"
-        );
+        assert!(args.contains(&"--default-features".to_string()));
     }
 
     #[test]
@@ -451,10 +474,7 @@ mod tests {
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
-        assert!(
-            args.contains(&"--only-explicit-features".to_string()),
-            "should have --only-explicit-features flag"
-        );
+        assert!(args.contains(&"--only-explicit-features".to_string()));
     }
 
     #[test]
@@ -472,7 +492,7 @@ mod tests {
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
         let features_idx = args.iter().position(|a| a == "--features");
-        assert!(features_idx.is_some(), "should have --features flag");
+        assert!(features_idx.is_some());
 
         let idx = features_idx.unwrap();
         assert_eq!(args[idx + 1], "serde,async");
@@ -493,7 +513,7 @@ mod tests {
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
         let idx = args.iter().position(|a| a == "--baseline-features");
-        assert!(idx.is_some(), "should have --baseline-features flag");
+        assert!(idx.is_some());
         assert_eq!(args[idx.unwrap() + 1], "feature1,feature2");
     }
 
@@ -512,7 +532,7 @@ mod tests {
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
         let idx = args.iter().position(|a| a == "--current-features");
-        assert!(idx.is_some(), "should have --current-features flag");
+        assert!(idx.is_some());
         assert_eq!(args[idx.unwrap() + 1], "new_feat");
     }
 
@@ -530,18 +550,9 @@ mod tests {
 
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
-        assert!(
-            !args.contains(&"--features".to_string()),
-            "should not have --features when list is empty"
-        );
-        assert!(
-            !args.contains(&"--baseline-features".to_string()),
-            "should not have --baseline-features when list is empty"
-        );
-        assert!(
-            !args.contains(&"--current-features".to_string()),
-            "should not have --current-features when list is empty"
-        );
+        assert!(!args.contains(&"--features".to_string()));
+        assert!(!args.contains(&"--baseline-features".to_string()));
+        assert!(!args.contains(&"--current-features".to_string()));
     }
 
     #[test]
@@ -626,10 +637,7 @@ mod tests {
         let all_features_idx = args.iter().position(|a| a == "--all-features").unwrap();
         let custom_idx = args.iter().position(|a| a == "--custom-flag").unwrap();
 
-        assert!(
-            custom_idx > all_features_idx,
-            "extra args should appear after feature flags"
-        );
+        assert!(custom_idx > all_features_idx);
     }
 
     // =========================================================================
@@ -773,10 +781,7 @@ mod tests {
         assert!(args.contains(&"2.0.0".to_string()));
 
         // Should NOT have --baseline-rev (because kind is CratesIo)
-        assert!(
-            !args.contains(&"--baseline-rev".to_string()),
-            "CratesIo baseline should not add --baseline-rev"
-        );
+        assert!(!args.contains(&"--baseline-rev".to_string()));
     }
 
     #[test]
@@ -798,10 +803,7 @@ mod tests {
         assert!(args.contains(&"main".to_string()));
 
         // Should NOT have --baseline-version (because kind is Git)
-        assert!(
-            !args.contains(&"--baseline-version".to_string()),
-            "Git baseline should not add --baseline-version"
-        );
+        assert!(!args.contains(&"--baseline-version".to_string()));
     }
 
     #[test]
@@ -1253,30 +1255,13 @@ Major version bump required.
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
         // Verify flag-value pairs are adjacent
-        let pairs = [
-            ("--manifest-path", true),
-            ("--baseline-rev", true),
-            ("--baseline-root", true),
-            ("--features", true),
-        ];
+        let flags = ["--manifest-path", "--baseline-rev", "--baseline-root", "--features"];
 
-        for (flag, should_exist) in pairs {
-            if should_exist {
-                let idx = args.iter().position(|a| a == flag);
-                assert!(idx.is_some(), "Flag {} should exist", flag);
-                let idx = idx.unwrap();
-                assert!(
-                    idx + 1 < args.len(),
-                    "Flag {} should have a value after it",
-                    flag
-                );
-                // Value should not be another flag (starts with --)
-                assert!(
-                    !args[idx + 1].starts_with("--"),
-                    "Value after {} should not be a flag",
-                    flag
-                );
-            }
+        for flag in flags {
+            let idx = args.iter().position(|a| a == flag).expect("flag should exist");
+            assert!(idx + 1 < args.len());
+            // Value should not be another flag (starts with --)
+            assert!(!args[idx + 1].starts_with("--"));
         }
     }
 
@@ -1315,11 +1300,7 @@ Major version bump required.
         let err = result.unwrap_err();
         let err_msg = err.to_string();
         // Should indicate it failed to run the command
-        assert!(
-            err_msg.contains("failed to run cargo semver-checks"),
-            "Error should mention failed to run: {}",
-            err_msg
-        );
+        assert!(err_msg.contains("failed to run cargo semver-checks"));
     }
 
     #[test]
@@ -1335,44 +1316,40 @@ Major version bump required.
         assert!(result.is_err());
         let err = result.unwrap_err();
         let err_msg = err.to_string();
-        assert!(
-            err_msg.contains("failed to run cargo semver-checks"),
-            "Error should mention failed to run: {}",
-            err_msg
-        );
+        assert!(err_msg.contains("failed to run cargo semver-checks"));
+    }
+
+    #[test]
+    fn test_check_success_with_fake_cargo() {
+        let fake = write_fake_cargo(0);
+        let engine = CargoSemverChecksEngine;
+        let mut req = minimal_request();
+        req.cargo_bin = Some(fake.path.clone());
+        req.workspace_root = fake._dir.path().to_path_buf();
+
+        let (command, output) = engine.check(req).expect("fake cargo should run");
+
+        assert_eq!(command[0], fake.path.to_string_lossy().to_string());
+        assert!(command.contains(&"semver-checks".to_string()));
+        assert!(command.contains(&"check-release".to_string()));
+        assert_eq!(output.exit_code, Some(0));
+        assert!(output.success);
+        assert!(output.stdout.contains("Major version bump required."));
+        assert!(output.stderr.contains("stderr line"));
+        assert!(matches!(output.required_bump, Some(RequiredBump::Major)));
     }
 
     #[test]
     fn test_check_nonexistent_manifest() {
-        // Test with a manifest path that doesn't exist
-        // Note: This may succeed in running cargo but cargo will fail
+        let fake = write_fake_cargo(1);
         let engine = CargoSemverChecksEngine;
         let mut req = minimal_request();
+        req.cargo_bin = Some(fake.path.clone());
+        req.workspace_root = fake._dir.path().to_path_buf();
         req.manifest_path = PathBuf::from("/definitely/does/not/exist/Cargo.toml");
 
-        let result = engine.check(req);
-
-        // This could either:
-        // 1. Fail if cargo isn't installed
-        // 2. Succeed but with non-zero exit code from cargo
-        match result {
-            Ok((_, output)) => {
-                // Cargo ran but should have failed
-                assert!(
-                    !output.success,
-                    "Cargo should fail with nonexistent manifest"
-                );
-            }
-            Err(e) => {
-                // Cargo failed to run (acceptable if cargo not installed in test env)
-                let err_msg = e.to_string();
-                assert!(
-                    err_msg.contains("failed to run") || err_msg.contains("cargo"),
-                    "Error should be about cargo execution: {}",
-                    err_msg
-                );
-            }
-        }
+        let (_command, output) = engine.check(req).expect("fake cargo should run");
+        assert!(!output.success);
     }
 
     // =========================================================================

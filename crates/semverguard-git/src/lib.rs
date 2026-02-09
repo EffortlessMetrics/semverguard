@@ -110,6 +110,40 @@ impl GitProvider for GitCli {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    struct FakeGit {
+        _dir: TempDir,
+        path: PathBuf,
+    }
+
+    fn write_fake_git() -> FakeGit {
+        let dir = tempfile::tempdir().expect("tempdir");
+        #[cfg(windows)]
+        let path = dir.path().join("fake_git.cmd");
+        #[cfg(not(windows))]
+        let path = dir.path().join("fake_git.sh");
+
+        #[cfg(windows)]
+        let script = "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo git version 2.40.0\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"rev-parse\" if \"%2\"==\"--is-shallow-repository\" (\r\n  echo true\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"rev-parse\" if \"%2\"==\"HEAD\" (\r\n  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"rev-parse\" if \"%2\"==\"bad\" (\r\n  echo unknown ref 1>&2\r\n  exit /b 1\r\n)\r\nif \"%1\"==\"rev-parse\" (\r\n  echo bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"diff\" if \"%2\"==\"--name-only\" (\r\n  echo src/lib.rs\r\n  echo Cargo.toml\r\n  exit /b 0\r\n)\r\necho unknown args 1>&2\r\nexit /b 1\r\n";
+        #[cfg(not(windows))]
+        let script = "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"git version 2.40.0\"\n  exit 0\nfi\nif [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"--is-shallow-repository\" ]; then\n  echo \"true\"\n  exit 0\nfi\nif [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"HEAD\" ]; then\n  echo \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n  exit 0\nfi\nif [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"bad\" ]; then\n  echo \"unknown ref\" 1>&2\n  exit 1\nfi\nif [ \"$1\" = \"rev-parse\" ]; then\n  echo \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\n  exit 0\nfi\nif [ \"$1\" = \"diff\" ] && [ \"$2\" = \"--name-only\" ]; then\n  echo \"src/lib.rs\"\n  echo \"Cargo.toml\"\n  exit 0\nfi\necho \"unknown args\" 1>&2\nexit 1\n";
+
+        fs::write(&path, script).expect("write fake git script");
+
+        #[cfg(unix)]
+        {
+            let mut perms = fs::metadata(&path).expect("metadata").permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&path, perms).expect("set permissions");
+        }
+
+        FakeGit { _dir: dir, path }
+    }
 
     mod parse_diff_output_tests {
         use super::*;
@@ -220,6 +254,57 @@ mod tests {
         fn default_uses_git() {
             let cli = GitCli::default();
             assert_eq!(cli.git_bin, PathBuf::from("git"));
+        }
+
+        #[test]
+        fn is_available_and_version_use_git() {
+            let fake = write_fake_git();
+            let cli = GitCli::new(Some(fake.path.clone()));
+            let root = fake._dir.path();
+
+            assert!(cli.is_available(root));
+            assert_eq!(cli.version(root), Some("git version 2.40.0".to_string()));
+        }
+
+        #[test]
+        fn is_available_false_when_missing() {
+            let cli = GitCli::new(Some(PathBuf::from("/nonexistent/git")));
+            let root = Path::new(".");
+            assert!(!cli.is_available(root));
+            assert!(cli.version(root).is_none());
+        }
+
+        #[test]
+        fn resolves_and_parses_git_outputs() {
+            let fake = write_fake_git();
+            let cli = GitCli::new(Some(fake.path.clone()));
+            let root = fake._dir.path();
+
+            assert_eq!(cli.is_shallow(root).unwrap(), true);
+            assert_eq!(
+                cli.resolve_head(root).unwrap(),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            );
+            assert_eq!(
+                cli.resolve_ref(root, "v1.0.0").unwrap(),
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            );
+
+            let changed = cli.changed_paths(root, "base", "head").unwrap();
+            assert_eq!(
+                changed,
+                vec![PathBuf::from("src/lib.rs"), PathBuf::from("Cargo.toml")]
+            );
+        }
+
+        #[test]
+        fn resolve_ref_returns_error_on_failure() {
+            let fake = write_fake_git();
+            let cli = GitCli::new(Some(fake.path.clone()));
+            let root = fake._dir.path();
+
+            let err = cli.resolve_ref(root, "bad").unwrap_err();
+            assert!(err.to_string().contains("git command failed"));
         }
     }
 }

@@ -1032,8 +1032,11 @@ fn build_summary_data(report: &RunReport, baseline: &BaselineConfig) -> SummaryD
 mod tests {
     use super::*;
     use semverguard_types::{
-        BaselineConfig, CapabilityStatus, PackageStatus, RequiredBump, Summary,
+        BaselineConfig, BaselineErrorCause, BaselineKind, CapabilityStatus, FailureKind, Finding,
+        FindingLevel, PackageStatus, RequiredBump, SemverCheckOutput, Summary, WaiverEntry,
     };
+    use std::fs;
+    use tempfile::tempdir;
 
     fn sample_report() -> RunReport {
         RunReport {
@@ -1078,6 +1081,84 @@ mod tests {
         }
     }
 
+    fn report_with_required_bumps(bumps: &[RequiredBump]) -> RunReport {
+        let mut packages = Vec::new();
+        for (idx, bump) in bumps.iter().enumerate() {
+            packages.push(PackageReport {
+                name: format!("pkg-{idx}"),
+                version: format!("1.0.{idx}"),
+                manifest_path: PathBuf::from(format!("/workspace/pkg-{idx}/Cargo.toml")),
+                status: PackageStatus::Failed,
+                skip_reason: None,
+                duration_ms: 1,
+                command: vec![],
+                engine: None,
+                inferred_required_bump: Some(*bump),
+                failure_kind: Some(FailureKind::SemverViolation),
+                baseline_error: None,
+            });
+        }
+
+        RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages,
+            summary: Summary {
+                total: bumps.len(),
+                passed: 0,
+                failed: bumps.len(),
+                skipped: 0,
+            },
+        }
+    }
+
+    fn report_with_semver_and_baseline_failures() -> RunReport {
+        RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![
+                PackageReport {
+                    name: "alpha".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/alpha/Cargo.toml"),
+                    status: PackageStatus::Failed,
+                    skip_reason: None,
+                    duration_ms: 10,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: Some(RequiredBump::Minor),
+                    failure_kind: Some(FailureKind::SemverViolation),
+                    baseline_error: None,
+                },
+                PackageReport {
+                    name: "beta".to_string(),
+                    version: "0.9.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/beta/Cargo.toml"),
+                    status: PackageStatus::Failed,
+                    skip_reason: None,
+                    duration_ms: 5,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: Some(FailureKind::BaselineError),
+                    baseline_error: Some(BaselineErrorCause::RevisionNotFound {
+                        rev: "deadbeef".to_string(),
+                    }),
+                },
+            ],
+            summary: Summary {
+                total: 2,
+                passed: 0,
+                failed: 2,
+                skipped: 0,
+            },
+        }
+    }
+
     #[test]
     fn test_build_artifact_index_raw_logs_sorted() {
         let report = sample_report();
@@ -1105,7 +1186,7 @@ mod tests {
 
     #[test]
     fn test_build_receipt_findings_ordering() {
-        let report = sample_report();
+        let report = report_with_semver_and_baseline_failures();
         let artifacts = build_artifact_index(
             Path::new("workspace"),
             Path::new("artifacts/semverguard"),
@@ -1124,10 +1205,7 @@ mod tests {
         for window in receipt.findings.windows(2) {
             let a = &window[0];
             let b = &window[1];
-            assert!(
-                finding_sort_key(a) <= finding_sort_key(b),
-                "Findings should be sorted by severity, then package, then fingerprint"
-            );
+            assert!(finding_sort_key(a) <= finding_sort_key(b), "Findings should be sorted by severity, then package, then fingerprint");
         }
     }
 
@@ -1141,7 +1219,7 @@ mod tests {
     #[test]
     fn test_findings_sorted_severity_then_package() {
         // Create a report with both semver violation (error) and baseline error (warning)
-        let report = sample_report(); // has b-lib (error/violation) and a-lib is skipped
+        let report = report_with_semver_and_baseline_failures();
         let artifacts = build_artifact_index(
             Path::new("workspace"),
             Path::new("artifacts/semverguard"),
@@ -1156,13 +1234,11 @@ mod tests {
             report.workspace_root.as_path(),
         );
         // With severity-first sort, errors come before warnings
-        if receipt.findings.len() >= 2 {
-            assert!(
-                receipt.findings[0].level.severity_rank()
-                    <= receipt.findings[1].level.severity_rank(),
-                "Errors should sort before warnings"
-            );
-        }
+        assert!(receipt.findings.len() >= 2);
+        assert!(
+            receipt.findings[0].level.severity_rank()
+                <= receipt.findings[1].level.severity_rank()
+        );
     }
 
     #[test]
@@ -1191,6 +1267,32 @@ mod tests {
         assert_eq!(summary.max_required_bump, Some("major".to_string()));
         assert_eq!(summary.baseline_kind, "crates-io");
         assert!(summary.baseline_ref.is_none()); // default baseline has no version
+    }
+
+    #[test]
+    fn test_summary_data_required_bump_variants_and_git_baseline() {
+        let report = report_with_required_bumps(&[
+            RequiredBump::Minor,
+            RequiredBump::Patch,
+            RequiredBump::Unknown,
+        ]);
+        let baseline_git = BaselineConfig {
+            kind: BaselineKind::Git,
+            rev: Some("origin/main".to_string()),
+            ..BaselineConfig::default()
+        };
+        let summary = build_summary_data(&report, &baseline_git);
+        assert_eq!(summary.max_required_bump, Some("minor".to_string()));
+        assert_eq!(summary.baseline_kind, "git");
+        assert_eq!(summary.baseline_ref, Some("origin/main".to_string()));
+
+        let report_patch = report_with_required_bumps(&[RequiredBump::Patch, RequiredBump::Unknown]);
+        let summary_patch = build_summary_data(&report_patch, &BaselineConfig::default());
+        assert_eq!(summary_patch.max_required_bump, Some("patch".to_string()));
+
+        let report_unknown = report_with_required_bumps(&[RequiredBump::Unknown]);
+        let summary_unknown = build_summary_data(&report_unknown, &BaselineConfig::default());
+        assert_eq!(summary_unknown.max_required_bump, Some("unknown".to_string()));
     }
 
     #[test]
@@ -1325,14 +1427,15 @@ mod tests {
         );
 
         // Findings from packages should have fingerprints
-        for finding in &receipt.findings {
-            if finding.check_id != CHECK_TOOL {
-                assert!(
-                    finding.fingerprint.is_some(),
-                    "Finding {} should have fingerprint",
-                    finding.check_id
-                );
-            }
+        assert!(!receipt.findings.is_empty());
+        let non_tool: Vec<_> = receipt
+            .findings
+            .iter()
+            .filter(|f| f.check_id != CHECK_TOOL)
+            .collect();
+        assert!(!non_tool.is_empty());
+        for finding in non_tool {
+            assert!(finding.fingerprint.is_some());
         }
     }
 
@@ -1351,11 +1454,7 @@ mod tests {
         ];
         let re = regex_lite::Regex::new(r"^[a-z0-9_]+(\.[a-z0-9_]+)*$").unwrap();
         for token in &tokens {
-            assert!(
-                re.is_match(token),
-                "Token '{}' does not match expected format",
-                token
-            );
+            assert!(re.is_match(token), "Token '{}' does not match expected format", token);
         }
     }
 
@@ -1376,12 +1475,15 @@ mod tests {
         ];
         let re = regex_lite::Regex::new(r"^[a-z][a-z0-9_]*$").unwrap();
         for token in &tokens {
-            assert!(
-                re.is_match(token),
-                "Reason token '{}' does not match expected format",
-                token
-            );
+            assert!(re.is_match(token), "Reason token '{}' does not match expected format", token);
         }
+    }
+
+    #[test]
+    fn test_required_bump_str_variants() {
+        assert_eq!(required_bump_str(RequiredBump::Minor), "minor");
+        assert_eq!(required_bump_str(RequiredBump::Patch), "patch");
+        assert_eq!(required_bump_str(RequiredBump::Unknown), "unknown");
     }
 
     #[test]
@@ -1415,22 +1517,14 @@ mod tests {
         let result = normalize_receipt_path(workspace, Path::new("/other/dir/Cargo.toml"));
         // On the same filesystem, strip_prefix fails, path contains ..
         // The implementation falls back to filename
-        assert!(
-            !result.contains(".."),
-            "Result should not contain '..' path traversal: {}",
-            result
-        );
+        assert!(!result.contains(".."), "Result should not contain '..' path traversal: {}", result);
     }
 
     #[test]
     fn test_normalize_receipt_path_forward_slashes() {
         let workspace = Path::new("/workspace");
         let result = normalize_receipt_path(workspace, Path::new("/workspace/foo/bar/Cargo.toml"));
-        assert!(
-            !result.contains('\\'),
-            "Normalized path should not contain backslashes: {}",
-            result
-        );
+        assert!(!result.contains('\\'), "Normalized path should not contain backslashes: {}", result);
     }
 
     #[test]
@@ -1438,11 +1532,7 @@ mod tests {
         let workspace = Path::new("/workspace");
         let result =
             normalize_receipt_path(workspace, Path::new("/workspace/crates/lib/Cargo.toml"));
-        assert!(
-            !result.starts_with('/'),
-            "Normalized path should be relative, not absolute: {}",
-            result
-        );
+        assert!(!result.starts_with('/'), "Normalized path should be relative, not absolute: {}", result);
     }
 
     #[test]
@@ -1450,16 +1540,8 @@ mod tests {
         let workspace = Path::new("/workspace");
         let result =
             normalize_receipt_path(workspace, Path::new("artifacts/semverguard/report.json"));
-        assert!(
-            !result.contains('\\'),
-            "Relative path should use forward slashes: {}",
-            result
-        );
-        assert!(
-            !result.contains(".."),
-            "Relative path should not contain path traversal: {}",
-            result
-        );
+        assert!(!result.contains('\\'), "Relative path should use forward slashes: {}", result);
+        assert!(!result.contains(".."), "Relative path should not contain path traversal: {}", result);
     }
 
     #[test]
@@ -1479,14 +1561,10 @@ mod tests {
             report.workspace_root.as_path(),
         );
         // Under the limit: no truncation totals in data, no "truncated" reason
-        if let Some(data) = &receipt.data {
-            assert!(data.findings_total.is_none());
-            assert!(data.findings_emitted.is_none());
-        }
-        assert!(
-            !receipt.verdict.reasons.contains(&"truncated".to_string()),
-            "Verdict should not contain 'truncated' reason when under limit"
-        );
+        let data = receipt.data.as_ref().expect("data should be present");
+        assert!(data.findings_total.is_none());
+        assert!(data.findings_emitted.is_none());
+        assert!(!receipt.verdict.reasons.contains(&"truncated".to_string()), "Verdict should not contain 'truncated' reason when under limit");
     }
 
     #[test]
@@ -1544,7 +1622,6 @@ mod tests {
 
     #[test]
     fn test_waiver_applied_by_fingerprint() {
-        use semverguard_types::WaiverEntry;
         let report = sample_report();
         let artifacts = build_artifact_index(
             Path::new("workspace"),
@@ -1582,8 +1659,563 @@ mod tests {
     }
 
     #[test]
+    fn test_capability_context_git_version_combines_with_detail() {
+        let ctx = CapabilityContext::new()
+            .with_git_available(true)
+            .with_git_detail("origin/main")
+            .with_git_version("git 2.42.0");
+        let caps = ctx.build();
+        assert_eq!(
+            caps.git.detail,
+            Some("git 2.42.0; rev=origin/main".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_artifacts_dir_absolute() {
+        let dir = tempdir().unwrap();
+        let artifacts = resolve_artifacts_dir(Path::new("/workspace"), dir.path());
+        assert_eq!(artifacts, dir.path());
+    }
+
+    #[test]
+    fn test_build_findings_failure_kinds_and_data() {
+        let packages = vec![
+            PackageReport {
+                name: "alpha".to_string(),
+                version: "1.2.3".to_string(),
+                manifest_path: PathBuf::from("/workspace/alpha/Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: None,
+                duration_ms: 10,
+                command: vec![],
+                engine: Some(SemverCheckOutput {
+                    exit_code: Some(1),
+                    success: false,
+                    stdout: String::new(),
+                    stderr: "breaking".to_string(),
+                    required_bump: Some(RequiredBump::Major),
+                }),
+                inferred_required_bump: Some(RequiredBump::Major),
+                failure_kind: Some(FailureKind::SemverViolation),
+                baseline_error: None,
+            },
+            PackageReport {
+                name: "beta".to_string(),
+                version: "0.9.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/beta/Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: None,
+                duration_ms: 5,
+                command: vec![],
+                engine: Some(SemverCheckOutput {
+                    exit_code: Some(2),
+                    success: false,
+                    stdout: String::new(),
+                    stderr: "baseline missing".to_string(),
+                    required_bump: None,
+                }),
+                inferred_required_bump: None,
+                failure_kind: Some(FailureKind::BaselineError),
+                baseline_error: Some(BaselineErrorCause::RevisionNotFound {
+                    rev: "origin/missing".to_string(),
+                }),
+            },
+            PackageReport {
+                name: "gamma".to_string(),
+                version: "2.0.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/gamma/Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: Some("tool crashed".to_string()),
+                duration_ms: 1,
+                command: vec![],
+                engine: None,
+                inferred_required_bump: None,
+                failure_kind: Some(FailureKind::ToolError),
+                baseline_error: None,
+            },
+            PackageReport {
+                name: "delta".to_string(),
+                version: "0.1.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/delta/Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: None,
+                duration_ms: 1,
+                command: vec![],
+                engine: None,
+                inferred_required_bump: None,
+                failure_kind: Some(FailureKind::Unknown),
+                baseline_error: None,
+            },
+            PackageReport {
+                name: "skip".to_string(),
+                version: "0.1.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/skip/Cargo.toml"),
+                status: PackageStatus::Skipped,
+                skip_reason: Some("filtered".to_string()),
+                duration_ms: 0,
+                command: vec![],
+                engine: None,
+                inferred_required_bump: None,
+                failure_kind: None,
+                baseline_error: None,
+            },
+        ];
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages,
+            summary: Summary {
+                total: 5,
+                passed: 0,
+                failed: 4,
+                skipped: 1,
+            },
+        };
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            Path::new("artifacts/semverguard"),
+            Some(&report),
+            false,
+        );
+
+        let findings = build_findings(&report, &artifacts, report.workspace_root.as_path());
+        assert_eq!(findings.len(), 4);
+
+        let semver = findings.iter().find(|f| f.check_id == CHECK_SEMVER).unwrap();
+        let semver_data = semver.data.as_ref().unwrap();
+        assert_eq!(
+            semver_data
+                .get("suggested_version")
+                .and_then(|v| v.as_str()),
+            Some("2.0.0")
+        );
+
+        let baseline = findings
+            .iter()
+            .find(|f| f.check_id == CHECK_BASELINE)
+            .unwrap();
+        assert!(baseline.message.contains("baseline missing"));
+        let baseline_data = baseline.data.as_ref().unwrap();
+        assert!(baseline_data.get("baseline_error_cause").is_some());
+
+        let tool = findings.iter().find(|f| f.check_id == CHECK_TOOL).unwrap();
+        assert!(tool.message.contains("tool crashed"));
+
+        let unknown = findings.iter().find(|f| f.check_id == CHECK_ENGINE).unwrap();
+        assert!(unknown.message.contains("unknown error"));
+    }
+
+    #[test]
+    fn test_build_failure_message_without_bump() {
+        let pkg = PackageReport {
+            name: "alpha".to_string(),
+            version: "1.2.3".to_string(),
+            manifest_path: PathBuf::from("/workspace/alpha/Cargo.toml"),
+            status: PackageStatus::Failed,
+            skip_reason: None,
+            duration_ms: 1,
+            command: vec![],
+            engine: None,
+            inferred_required_bump: None,
+            failure_kind: Some(FailureKind::SemverViolation),
+            baseline_error: None,
+        };
+
+        let message = build_failure_message(&pkg, FailureKind::SemverViolation);
+        assert!(message.contains("failed semantic versioning checks"));
+    }
+
+    #[test]
+    fn test_apply_waivers_with_expired_and_invalid_dates() {
+        let mut findings = vec![Finding {
+            check_id: CHECK_SEMVER.to_string(),
+            code: CODE_VIOLATION.to_string(),
+            level: FindingLevel::Error,
+            message: "boom".to_string(),
+            location: None,
+            data: None,
+            fingerprint: Some("fp".to_string()),
+            waived: None,
+        }];
+        let waivers = vec![
+            WaiverEntry {
+                fingerprint: "fp".to_string(),
+                reason: "expired".to_string(),
+                ticket: None,
+                expires: Some("2000-01-01".to_string()),
+            },
+            WaiverEntry {
+                fingerprint: "fp".to_string(),
+                reason: "invalid-date".to_string(),
+                ticket: None,
+                expires: Some("not-a-date".to_string()),
+            },
+        ];
+
+        apply_waivers(&mut findings, &waivers);
+        let waived = findings[0].waived.as_ref().unwrap();
+        assert_eq!(waived.reason, "invalid-date");
+    }
+
+    #[test]
+    fn test_apply_waivers_non_expired_applies() {
+        let mut findings = vec![Finding {
+            check_id: CHECK_SEMVER.to_string(),
+            code: CODE_VIOLATION.to_string(),
+            level: FindingLevel::Error,
+            message: "boom".to_string(),
+            location: None,
+            data: None,
+            fingerprint: Some("fp-ok".to_string()),
+            waived: None,
+        }];
+        let waivers = vec![WaiverEntry {
+            fingerprint: "fp-ok".to_string(),
+            reason: "ok".to_string(),
+            ticket: None,
+            expires: Some("2099-01-01".to_string()),
+        }];
+
+        apply_waivers(&mut findings, &waivers);
+        assert!(findings[0].waived.is_some());
+    }
+
+    #[test]
+    fn test_apply_waivers_skips_missing_fingerprint() {
+        let mut findings = vec![Finding {
+            check_id: CHECK_SEMVER.to_string(),
+            code: CODE_VIOLATION.to_string(),
+            level: FindingLevel::Error,
+            message: "boom".to_string(),
+            location: None,
+            data: None,
+            fingerprint: None,
+            waived: None,
+        }];
+        let waivers = vec![WaiverEntry {
+            fingerprint: "fp-ok".to_string(),
+            reason: "ok".to_string(),
+            ticket: None,
+            expires: Some("2099-01-01".to_string()),
+        }];
+
+        apply_waivers(&mut findings, &waivers);
+        assert!(findings[0].waived.is_none());
+    }
+
+    #[test]
+    fn test_is_waiver_expired_with_valid_date() {
+        let waiver = WaiverEntry {
+            fingerprint: "fp".to_string(),
+            reason: "expired".to_string(),
+            ticket: None,
+            expires: Some("2000-01-01".to_string()),
+        };
+        assert!(is_waiver_expired(&waiver));
+    }
+
+    #[test]
+    fn test_is_waiver_expired_invalid_month_returns_false() {
+        let waiver = WaiverEntry {
+            fingerprint: "fp".to_string(),
+            reason: "invalid".to_string(),
+            ticket: None,
+            expires: Some("2024-13-01".to_string()),
+        };
+        assert!(!is_waiver_expired(&waiver));
+    }
+
+    #[test]
+    fn test_is_waiver_expired_invalid_day_returns_false() {
+        let waiver = WaiverEntry {
+            fingerprint: "fp".to_string(),
+            reason: "invalid".to_string(),
+            ticket: None,
+            expires: Some("2024-02-30".to_string()),
+        };
+        assert!(!is_waiver_expired(&waiver));
+    }
+
+    #[test]
+    fn test_is_waiver_expired_invalid_format_returns_false() {
+        let waiver = WaiverEntry {
+            fingerprint: "fp".to_string(),
+            reason: "invalid".to_string(),
+            ticket: None,
+            expires: Some("bad".to_string()),
+        };
+        assert!(!is_waiver_expired(&waiver));
+    }
+
+    #[test]
+    fn test_derive_verdict_includes_engine_waived_truncated_and_skipped() {
+        let findings = vec![
+            Finding {
+                check_id: CHECK_ENGINE.to_string(),
+                code: CODE_UNKNOWN.to_string(),
+                level: FindingLevel::Error,
+                message: "engine failed".to_string(),
+                location: None,
+                data: None,
+                fingerprint: None,
+                waived: None,
+            },
+            Finding {
+                check_id: CHECK_BASELINE.to_string(),
+                code: CODE_MISSING.to_string(),
+                level: FindingLevel::Warning,
+                message: "baseline missing".to_string(),
+                location: None,
+                data: None,
+                fingerprint: None,
+                waived: Some(WaiverInfo {
+                    reason: "waived".to_string(),
+                    ticket: None,
+                    expires: None,
+                }),
+            },
+        ];
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![],
+            summary: Summary {
+                total: 1,
+                passed: 0,
+                failed: 0,
+                skipped: 1,
+            },
+        };
+
+        let (status, reasons) = derive_verdict(&findings, Some(&report), true);
+        assert_eq!(status, VerdictStatus::Fail);
+        assert!(reasons.contains(&REASON_ENGINE_ERROR.to_string()));
+        assert!(reasons.contains(&REASON_ALL_PACKAGES_SKIPPED.to_string()));
+        assert!(reasons.contains(&REASON_TRUNCATED.to_string()));
+        assert!(reasons.contains(&REASON_WAIVED.to_string()));
+    }
+
+    #[test]
+    fn test_derive_verdict_unknown_check_id_passes() {
+        let findings = vec![Finding {
+            check_id: "custom".to_string(),
+            code: CODE_UNKNOWN.to_string(),
+            level: FindingLevel::Error,
+            message: "custom".to_string(),
+            location: None,
+            data: None,
+            fingerprint: None,
+            waived: None,
+        }];
+
+        let (status, reasons) = derive_verdict(&findings, None, false);
+        assert_eq!(status, VerdictStatus::Pass);
+        assert!(reasons.is_empty());
+    }
+
+    #[test]
+    fn test_derive_verdict_baseline_warn() {
+        let findings = vec![Finding {
+            check_id: CHECK_BASELINE.to_string(),
+            code: CODE_MISSING.to_string(),
+            level: FindingLevel::Warning,
+            message: "baseline missing".to_string(),
+            location: None,
+            data: None,
+            fingerprint: None,
+            waived: None,
+        }];
+
+        let (status, reasons) = derive_verdict(&findings, None, false);
+        assert_eq!(status, VerdictStatus::Warn);
+        assert!(reasons.contains(&REASON_BASELINE_UNAVAILABLE.to_string()));
+    }
+
+    #[test]
+    fn test_derive_verdict_all_skipped() {
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![],
+            summary: Summary {
+                total: 2,
+                passed: 0,
+                failed: 0,
+                skipped: 2,
+            },
+        };
+
+        let (status, reasons) = derive_verdict(&[], Some(&report), false);
+        assert_eq!(status, VerdictStatus::Skip);
+        assert!(reasons.contains(&REASON_ALL_PACKAGES_SKIPPED.to_string()));
+    }
+
+    #[test]
+    fn test_write_raw_logs_handles_missing_engine_and_skipped() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("raw")).unwrap();
+
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![
+                PackageReport {
+                    name: "skip".to_string(),
+                    version: "0.1.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/skip/Cargo.toml"),
+                    status: PackageStatus::Skipped,
+                    skip_reason: Some("filtered".to_string()),
+                    duration_ms: 0,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: None,
+                    baseline_error: None,
+                },
+                PackageReport {
+                    name: "beta".to_string(),
+                    version: "0.2.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/beta/Cargo.toml"),
+                    status: PackageStatus::Failed,
+                    skip_reason: Some("engine missing".to_string()),
+                    duration_ms: 10,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: Some(FailureKind::ToolError),
+                    baseline_error: None,
+                },
+                PackageReport {
+                    name: "alpha".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/alpha/Cargo.toml"),
+                    status: PackageStatus::Passed,
+                    skip_reason: None,
+                    duration_ms: 5,
+                    command: vec![],
+                    engine: Some(SemverCheckOutput {
+                        exit_code: Some(0),
+                        success: true,
+                        stdout: "ok".to_string(),
+                        stderr: String::new(),
+                        required_bump: None,
+                    }),
+                    inferred_required_bump: None,
+                    failure_kind: None,
+                    baseline_error: None,
+                },
+            ],
+            summary: Summary {
+                total: 3,
+                passed: 1,
+                failed: 1,
+                skipped: 1,
+            },
+        };
+
+        write_raw_logs(dir.path(), &report).unwrap();
+        let (stdout_path, stderr_path) = raw_log_paths(dir.path(), &report.packages[1]);
+        let stdout = fs::read_to_string(stdout_path).unwrap();
+        let stderr = fs::read_to_string(stderr_path).unwrap();
+        assert_eq!(stdout, "no output");
+        assert_eq!(stderr, "engine missing");
+    }
+
+    #[test]
+    fn test_write_receipt_bundle_compact_json() {
+        let dir = tempdir().unwrap();
+        let report = sample_report();
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            dir.path(),
+            Some(&report),
+            false,
+        );
+        let receipt = build_receipt(
+            Some(&report),
+            &[],
+            &artifacts,
+            &BaselineConfig::default(),
+            report.workspace_root.as_path(),
+        );
+
+        write_receipt_bundle(dir.path(), &receipt, Some(&report), false, false).unwrap();
+
+        let contents = fs::read_to_string(dir.path().join("report.json")).unwrap();
+        assert!(contents.contains("\"schema\""));
+    }
+
+    #[test]
+    fn test_normalize_receipt_path_traversal_fallback() {
+        let workspace = Path::new("/workspace");
+        let result = normalize_receipt_path(workspace, Path::new("/workspace/../secret.txt"));
+        assert_eq!(result, "secret.txt");
+    }
+
+    #[test]
+    fn test_sanitize_filename_component_replaces_special_chars() {
+        let sanitized = sanitize_filename_component("a/b:c");
+        assert_eq!(sanitized, "a_b_c");
+    }
+
+    #[test]
+    fn test_exit_code_from_receipt_tool_error_and_warn_as_fail() {
+        let verdict = Verdict {
+            status: VerdictStatus::Fail,
+            reasons: vec![],
+        };
+        assert_eq!(exit_code_from_receipt(&verdict, false, true), 1);
+
+        let warn_verdict = Verdict {
+            status: VerdictStatus::Warn,
+            reasons: vec![],
+        };
+        assert_eq!(exit_code_from_receipt(&warn_verdict, true, false), 3);
+    }
+
+    #[test]
+    fn test_exit_code_from_receipt_warn_without_fail() {
+        let verdict = Verdict {
+            status: VerdictStatus::Warn,
+            reasons: vec![],
+        };
+        assert_eq!(exit_code_from_receipt(&verdict, false, false), 0);
+    }
+
+    #[test]
+    fn test_truncation_applied_over_limit() {
+        let errors: Vec<ToolErrorFinding> = (0..(MAX_FINDINGS + 1))
+            .map(|_| ToolErrorFinding::new("boom".to_string()))
+            .collect();
+        let artifacts = build_artifact_index(
+            Path::new("workspace"),
+            Path::new("artifacts/semverguard"),
+            None,
+            false,
+        );
+        let receipt = build_receipt_with_capabilities(
+            None,
+            &errors,
+            &artifacts,
+            &BaselineConfig::default(),
+            Path::new("/workspace"),
+            None,
+        );
+        assert_eq!(receipt.findings.len(), MAX_FINDINGS);
+        assert!(receipt.verdict.reasons.contains(&REASON_TRUNCATED.to_string()));
+    }
+
+    #[test]
     fn test_waived_findings_skip_verdict() {
-        use semverguard_types::WaiverEntry;
         let report = sample_report();
         let artifacts = build_artifact_index(
             Path::new("workspace"),

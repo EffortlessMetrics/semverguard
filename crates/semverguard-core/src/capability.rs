@@ -96,6 +96,27 @@ mod tests {
     }
 
     #[test]
+    fn test_git_version_included_in_detail() {
+        let mut config = SemverguardConfig::default();
+        config.baseline.kind = BaselineKind::Git;
+        config.baseline.rev = Some("origin/main".to_string());
+
+        let ctx = build_capability_context(
+            &config,
+            &empty_report(),
+            true,
+            false,
+            Some("git 2.42.0".to_string()),
+        );
+        let caps = ctx.build();
+        assert_eq!(caps.git.status, CapabilityStatus::Available);
+        assert_eq!(
+            caps.git.detail,
+            Some("git 2.42.0; rev=origin/main".to_string())
+        );
+    }
+
+    #[test]
     fn test_git_unavailable() {
         let mut config = SemverguardConfig::default();
         config.baseline.kind = BaselineKind::Git;

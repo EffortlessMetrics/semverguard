@@ -8,3 +8,6 @@
 
 # mdbook output
 docs/book/
+fuzz/target
+fuzz/corpus
+fuzz/artifacts

@@ -370,3 +370,449 @@ pub fn write_pipeline_receipt(result: &PipelineResult, options: &PipelineOptions
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use semver::Version;
+    use semverguard_domain::{Result as DomainResult, SemverguardError};
+    use semverguard_types::{
+        OutputFormat, RequiredBump, RunMode, ScopeMode, SemverCheckOutput, SemverCheckRequest,
+        SemverguardConfig, VerdictStatus, WorkspaceMetadata, WorkspacePackage,
+    };
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+    use tempfile::tempdir;
+    use std::{fs, io};
+
+    struct MockWorkspaceProvider {
+        metadata: WorkspaceMetadata,
+    }
+
+    impl WorkspaceProvider for MockWorkspaceProvider {
+        fn load(&self, _workspace_root: &Path) -> DomainResult<WorkspaceMetadata> {
+            Ok(self.metadata.clone())
+        }
+    }
+
+    struct FailingWorkspaceProvider {
+        message: String,
+    }
+
+    impl WorkspaceProvider for FailingWorkspaceProvider {
+        fn load(&self, _workspace_root: &Path) -> DomainResult<WorkspaceMetadata> {
+            Err(SemverguardError::Workspace(self.message.clone()))
+        }
+    }
+
+    enum EngineOutcome {
+        Success,
+        SemverFail,
+        Error,
+    }
+
+    struct MockEngine {
+        outcome: EngineOutcome,
+    }
+
+    impl SemverEngine for MockEngine {
+        fn check(
+            &self,
+            _request: SemverCheckRequest,
+        ) -> DomainResult<(Vec<String>, SemverCheckOutput)> {
+            match self.outcome {
+                EngineOutcome::Success => Ok((
+                    vec!["cargo".to_string(), "semver-checks".to_string()],
+                    SemverCheckOutput {
+                        exit_code: Some(0),
+                        success: true,
+                        stdout: "ok".to_string(),
+                        stderr: String::new(),
+                        required_bump: None,
+                    },
+                )),
+                EngineOutcome::SemverFail => Ok((
+                    vec!["cargo".to_string(), "semver-checks".to_string()],
+                    SemverCheckOutput {
+                        exit_code: Some(1),
+                        success: false,
+                        stdout: String::new(),
+                        stderr: "breaking change".to_string(),
+                        required_bump: Some(RequiredBump::Major),
+                    },
+                )),
+                EngineOutcome::Error => Err(SemverguardError::Engine(
+                    "engine failed".to_string(),
+                )),
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingProgress {
+        events: Arc<Mutex<Vec<semverguard_domain::ProgressEvent>>>,
+    }
+
+    impl ProgressCallback for RecordingProgress {
+        fn on_progress(&self, event: semverguard_domain::ProgressEvent) {
+            self.events.lock().unwrap().push(event);
+        }
+    }
+
+    fn basic_metadata(workspace_root: &Path) -> WorkspaceMetadata {
+        let pkg_root = workspace_root.join("crates").join("my-crate");
+        let manifest_path = pkg_root.join("Cargo.toml");
+        WorkspaceMetadata {
+            workspace_root: workspace_root.to_path_buf(),
+            packages: vec![WorkspacePackage {
+                name: "my-crate".to_string(),
+                version: Version::parse("1.0.0").unwrap(),
+                manifest_path,
+                package_root: pkg_root,
+                publishable: true,
+                has_lib: true,
+            }],
+        }
+    }
+
+    fn base_config() -> SemverguardConfig {
+        let mut config = SemverguardConfig::default();
+        config.mode = RunMode::Release;
+        config.scope.mode = ScopeMode::Workspace;
+        config
+    }
+
+    fn write_minimal_workspace(root: &Path) -> io::Result<()> {
+        let crate_root = root.join("crates").join("my-crate");
+        fs::create_dir_all(crate_root.join("src"))?;
+        let workspace_toml =
+            "[workspace]\nresolver = \"2\"\nmembers = [\"crates/my-crate\"]\n";
+        fs::write(root.join("Cargo.toml"), workspace_toml)?;
+        let crate_toml =
+            "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n";
+        fs::write(crate_root.join("Cargo.toml"), crate_toml)?;
+        fs::write(crate_root.join("src/lib.rs"), "pub fn hello() {}\n")?;
+        Ok(())
+    }
+
+    fn write_fake_cargo(dir: &Path) -> io::Result<PathBuf> {
+        #[cfg(windows)]
+        let (path, script) = {
+            let path = dir.join("fake-cargo.cmd");
+            let script = "@echo off\r\nif \"%1\"==\"semver-checks\" (\r\n  echo No breaking changes detected.\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n";
+            (path, script.to_string())
+        };
+        #[cfg(not(windows))]
+        let (path, script) = {
+            let path = dir.join("fake-cargo");
+            let script = "#!/bin/sh\nif [ \"$1\" = \"semver-checks\" ]; then\n  echo \"No breaking changes detected.\"\n  exit 0\nfi\nexit 1\n";
+            (path, script.to_string())
+        };
+        fs::write(&path, script)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&path)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&path, perms)?;
+        }
+        Ok(path)
+    }
+
+    #[test]
+    fn test_run_with_adapters_non_receipt_uses_report_exit_code() {
+        let dir = tempdir().unwrap();
+        let metadata = basic_metadata(dir.path());
+        let workspace = MockWorkspaceProvider { metadata };
+        let engine = MockEngine {
+            outcome: EngineOutcome::SemverFail,
+        };
+        let mut config = base_config();
+        config.output.format = OutputFormat::Text;
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: false,
+            tool_version: Some("0.0.0-test".to_string()),
+            progress: None,
+        };
+
+        let result = run_with_adapters(&options, &workspace, None, &engine).unwrap();
+        assert_eq!(result.exit_code, 2);
+        let report = result.report.as_ref().unwrap();
+        assert_eq!(report.summary.failed, 1);
+        assert_eq!(result.receipt.verdict.status, VerdictStatus::Fail);
+    }
+
+    #[test]
+    fn test_run_with_adapters_non_receipt_tool_error_exit_code() {
+        let dir = tempdir().unwrap();
+        let metadata = basic_metadata(dir.path());
+        let workspace = MockWorkspaceProvider { metadata };
+        let engine = MockEngine {
+            outcome: EngineOutcome::Error,
+        };
+        let mut config = base_config();
+        config.output.format = OutputFormat::Text;
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: false,
+            tool_version: Some("0.0.0-test".to_string()),
+            progress: None,
+        };
+
+        let result = run_with_adapters(&options, &workspace, None, &engine).unwrap();
+        assert_eq!(result.exit_code, 1);
+        let report = result.report.as_ref().unwrap();
+        assert_eq!(report.summary.failed, 1);
+        assert_eq!(result.receipt.verdict.status, VerdictStatus::Fail);
+    }
+
+    #[test]
+    fn test_run_with_adapters_receipt_success_records_progress() {
+        let dir = tempdir().unwrap();
+        let metadata = basic_metadata(dir.path());
+        let workspace = MockWorkspaceProvider { metadata };
+        let engine = MockEngine {
+            outcome: EngineOutcome::Success,
+        };
+        let mut config = base_config();
+        config.output.format = OutputFormat::Receipt;
+
+        let events: Arc<Mutex<Vec<semverguard_domain::ProgressEvent>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let recorder: Arc<dyn ProgressCallback> = Arc::new(RecordingProgress {
+            events: Arc::clone(&events),
+        });
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: false,
+            tool_version: Some("0.0.0-test".to_string()),
+            progress: Some(recorder),
+        };
+
+        let result = run_with_adapters(&options, &workspace, None, &engine).unwrap();
+        assert!(result.report.is_some());
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.receipt.verdict.status, VerdictStatus::Pass);
+
+        let events = events.lock().unwrap();
+        let has_total = events.iter().any(|event| {
+            matches!(event, semverguard_domain::ProgressEvent::TotalPackages { total: 1 })
+        });
+        assert!(has_total);
+        let has_finished = events.iter().any(|event| {
+            matches!(
+                event,
+                semverguard_domain::ProgressEvent::Finished {
+                    passed: 1,
+                    failed: 0,
+                    skipped: 0,
+                }
+            )
+        });
+        assert!(has_finished);
+    }
+
+    #[test]
+    fn test_run_with_adapters_receipt_error_builds_tool_receipt() {
+        let dir = tempdir().unwrap();
+        let workspace = FailingWorkspaceProvider {
+            message: "boom".to_string(),
+        };
+        let engine = MockEngine {
+            outcome: EngineOutcome::Success,
+        };
+        let mut config = base_config();
+        config.output.format = OutputFormat::Receipt;
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: false,
+            tool_version: None,
+            progress: None,
+        };
+
+        let result = run_with_adapters(&options, &workspace, None, &engine).unwrap();
+        assert!(result.report.is_none());
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.receipt.verdict.status, VerdictStatus::Fail);
+        assert!(result
+            .receipt
+            .findings
+            .iter()
+            .any(|f| f.check_id == crate::receipt::CHECK_TOOL));
+    }
+
+    #[test]
+    fn test_run_with_adapters_non_receipt_propagates_error() {
+        let dir = tempdir().unwrap();
+        let workspace = FailingWorkspaceProvider {
+            message: "load failed".to_string(),
+        };
+        let engine = MockEngine {
+            outcome: EngineOutcome::Success,
+        };
+        let mut config = base_config();
+        config.output.format = OutputFormat::Text;
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: false,
+            tool_version: None,
+            progress: None,
+        };
+
+        let err = run_with_adapters(&options, &workspace, None, &engine)
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("workspace error"));
+        assert!(err.to_string().contains("load failed"));
+    }
+
+    #[test]
+    fn test_write_pipeline_receipt_writes_files() {
+        let dir = tempdir().unwrap();
+        let metadata = basic_metadata(dir.path());
+        let workspace = MockWorkspaceProvider { metadata };
+        let engine = MockEngine {
+            outcome: EngineOutcome::Success,
+        };
+        let mut config = base_config();
+        config.output.format = OutputFormat::Receipt;
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: true,
+            tool_version: Some("0.0.0-test".to_string()),
+            progress: None,
+        };
+
+        let result = run_with_adapters(&options, &workspace, None, &engine).unwrap();
+        write_pipeline_receipt(&result, &options).unwrap();
+
+        let artifacts_dir = crate::receipt::resolve_artifacts_dir(
+            &options.workspace_root,
+            &options.config.output.artifacts_dir,
+        );
+        assert!(artifacts_dir.join("report.json").exists());
+        assert!(artifacts_dir.join("comment.md").exists());
+        assert!(artifacts_dir.join("sarif.json").exists());
+        assert!(artifacts_dir.join("raw").exists());
+    }
+
+    #[cfg(feature = "default-adapters")]
+    #[test]
+    fn test_run_default_adapters_success_with_fake_cargo() {
+        let dir = tempdir().unwrap();
+        write_minimal_workspace(dir.path()).unwrap();
+        let fake_cargo = write_fake_cargo(dir.path()).unwrap();
+
+        let mut config = base_config();
+        config.output.format = OutputFormat::Receipt;
+        config.engine.cargo_bin = Some(fake_cargo);
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: false,
+            tool_version: Some("0.0.0-test".to_string()),
+            progress: None,
+        };
+
+        let result = run(&options).expect("run should succeed");
+        assert!(result.report.is_some());
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.receipt.verdict.status, VerdictStatus::Pass);
+    }
+
+    #[cfg(feature = "default-adapters")]
+    #[test]
+    fn test_run_default_adapters_invalid_glob_builds_tool_receipt() {
+        let dir = tempdir().unwrap();
+        write_minimal_workspace(dir.path()).unwrap();
+
+        let mut config = base_config();
+        config.output.format = OutputFormat::Receipt;
+        config.scope.include = vec!["[invalid".to_string()];
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: false,
+            tool_version: None,
+            progress: None,
+        };
+
+        let result = run(&options).expect("run should return tool receipt");
+        assert!(result.report.is_none());
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.receipt.verdict.status, VerdictStatus::Fail);
+        assert!(result
+            .receipt
+            .findings
+            .iter()
+            .any(|f| f.check_id == crate::receipt::CHECK_TOOL));
+    }
+
+    #[cfg(feature = "default-adapters")]
+    #[test]
+    fn test_run_default_adapters_text_with_progress() {
+        let dir = tempdir().unwrap();
+        write_minimal_workspace(dir.path()).unwrap();
+        let fake_cargo = write_fake_cargo(dir.path()).unwrap();
+
+        let mut config = base_config();
+        config.output.format = OutputFormat::Text;
+        config.engine.cargo_bin = Some(fake_cargo);
+
+        let recorder = RecordingProgress::default();
+        let events = Arc::clone(&recorder.events);
+        let progress: Arc<dyn ProgressCallback> = Arc::new(recorder);
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: false,
+            tool_version: Some("0.0.0-test".to_string()),
+            progress: Some(progress),
+        };
+
+        let result = run(&options).expect("run should succeed");
+        assert!(result.report.is_some());
+        assert_eq!(result.exit_code, 0);
+
+        let events = events.lock().unwrap();
+        assert!(!events.is_empty());
+    }
+
+    #[cfg(feature = "default-adapters")]
+    #[test]
+    fn test_run_default_adapters_invalid_glob_non_receipt_returns_err() {
+        let dir = tempdir().unwrap();
+        write_minimal_workspace(dir.path()).unwrap();
+
+        let mut config = base_config();
+        config.output.format = OutputFormat::Text;
+        config.scope.include = vec!["[invalid".to_string()];
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: false,
+            tool_version: None,
+            progress: None,
+        };
+
+        let result = run(&options);
+        assert!(result.is_err());
+    }
+}

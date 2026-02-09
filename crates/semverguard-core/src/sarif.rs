@@ -662,13 +662,17 @@ fn finding_to_sarif_result(finding: &Finding) -> SarifResult {
 
 /// Convert a path to a file URI.
 fn path_to_uri(path: &Path) -> String {
+    let cwd = std::env::current_dir().ok();
+    path_to_uri_with_cwd(path, cwd.as_deref())
+}
+
+fn path_to_uri_with_cwd(path: &Path, cwd: Option<&Path>) -> String {
     // Try to convert to absolute path and then to URI
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
-            .map(|cwd| cwd.join(path))
-            .unwrap_or_else(|_| path.to_path_buf())
+        cwd.map(|cwd| cwd.join(path))
+            .unwrap_or_else(|| path.to_path_buf())
     };
 
     // Convert to forward slashes for URI format
@@ -700,7 +704,10 @@ pub fn sarif_to_json(log: &SarifLog, pretty: bool) -> serde_json::Result<String>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use semverguard_types::{FailureKind, PackageStatus, Summary};
+    use semverguard_types::{
+        FailureKind, Finding, FindingLevel, FindingLocation, PackageStatus, SemverCheckOutput,
+        Summary,
+    };
     use std::path::PathBuf;
 
     fn sample_report() -> RunReport {
@@ -878,10 +885,7 @@ mod tests {
 
         for result in &sarif.runs[0].results {
             for loc in &result.locations {
-                assert!(
-                    loc.physical_location.region.is_none(),
-                    "HONESTY POLICY VIOLATION: region data should never be emitted"
-                );
+                assert!(loc.physical_location.region.is_none(), "HONESTY POLICY VIOLATION: region data should never be emitted");
             }
         }
     }
@@ -894,13 +898,7 @@ mod tests {
 
         for result in &sarif.runs[0].results {
             for loc in &result.locations {
-                assert!(
-                    loc.physical_location
-                        .artifact_location
-                        .uri
-                        .contains("Cargo.toml"),
-                    "HONESTY POLICY: location should point to Cargo.toml manifest"
-                );
+                assert!(loc.physical_location.artifact_location.uri.contains("Cargo.toml"), "HONESTY POLICY: location should point to Cargo.toml manifest");
             }
         }
     }
@@ -1324,10 +1322,7 @@ mod tests {
         let json = sarif_to_json(&sarif, false).unwrap();
 
         // URIs should not contain backslashes
-        assert!(
-            !json.contains("\\\\"),
-            "URIs should not contain escaped backslashes"
-        );
+        assert!(!json.contains("\\\\"));
         // Should use forward slashes in the URI
         assert!(json.contains("Cargo.toml"));
     }
@@ -1410,5 +1405,167 @@ mod tests {
         assert_eq!(normalize_uri_str("foo\\bar\\baz"), "foo/bar/baz");
         assert_eq!(normalize_uri_str("foo/bar/baz"), "foo/bar/baz");
         assert_eq!(normalize_uri_str("C:\\Users\\dev"), "C:/Users/dev");
+    }
+
+    #[test]
+    fn test_package_report_long_stderr_truncates_and_sets_raw_log_ref() {
+        let long_err = "x".repeat(250);
+        let pkg = PackageReport {
+            name: "lib-long".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: PathBuf::from("/workspace/lib-long/Cargo.toml"),
+            status: PackageStatus::Failed,
+            skip_reason: None,
+            duration_ms: 42,
+            command: vec![],
+            engine: Some(SemverCheckOutput {
+                exit_code: Some(1),
+                success: false,
+                stdout: String::new(),
+                stderr: long_err.clone(),
+                required_bump: Some(RequiredBump::Minor),
+            }),
+            inferred_required_bump: Some(RequiredBump::Minor),
+            failure_kind: Some(FailureKind::SemverViolation),
+            baseline_error: None,
+        };
+
+        let result = package_to_sarif_result(&pkg);
+        assert!(result.message.text.contains("Engine output:"));
+        assert!(result.message.text.contains(&format!("{}...", &long_err[..200])));
+        let props = result.properties.as_ref().unwrap();
+        assert!(props.raw_stderr_log.is_some());
+        assert!(result.message.text.contains("minor version bump"));
+    }
+
+    #[test]
+    fn test_finding_to_sarif_result_with_raw_log_location() {
+        let finding = Finding {
+            check_id: "semver".to_string(),
+            code: "violation".to_string(),
+            level: FindingLevel::Error,
+            message: "breaking".to_string(),
+            location: Some(semverguard_types::FindingLocation {
+                path: None,
+                line: None,
+                column: None,
+                raw_log: Some("raw/log.txt".to_string()),
+            }),
+            data: Some(serde_json::json!({
+                "required_bump": "patch",
+                "failure_kind": "semver-violation",
+                "package": "lib-x",
+                "version": "0.1.0"
+            })),
+            fingerprint: None,
+            waived: None,
+        };
+
+        let result = finding_to_sarif_result(&finding);
+        assert_eq!(result.rule_id, RULE_SEMVER_PATCH_REQUIRED);
+        assert!(matches!(result.level, SarifLevel::Note));
+        assert_eq!(result.locations[0].physical_location.artifact_location.uri, "raw/log.txt");
+        let props = result.properties.as_ref().unwrap();
+        assert_eq!(props.raw_stderr_log, Some("raw/log.txt".to_string()));
+    }
+
+    #[test]
+    fn test_finding_to_sarif_result_without_location() {
+        let finding = Finding {
+            check_id: "baseline".to_string(),
+            code: "missing".to_string(),
+            level: FindingLevel::Warning,
+            message: "baseline missing".to_string(),
+            location: None,
+            data: None,
+            fingerprint: None,
+            waived: None,
+        };
+
+        let result = finding_to_sarif_result(&finding);
+        assert!(result.locations.is_empty());
+    }
+
+    #[test]
+    fn test_finding_to_sarif_result_semver_unknown_bump() {
+        let finding = Finding {
+            check_id: "semver".to_string(),
+            code: "violation".to_string(),
+            level: FindingLevel::Error,
+            message: "breaking".to_string(),
+            location: None,
+            data: Some(serde_json::json!({
+                "required_bump": "mystery"
+            })),
+            fingerprint: None,
+            waived: None,
+        };
+
+        let result = finding_to_sarif_result(&finding);
+        assert_eq!(result.rule_id, RULE_SEMVER_BREAKING);
+        assert!(matches!(result.level, SarifLevel::Error));
+    }
+
+    #[test]
+    fn test_finding_to_sarif_result_semver_without_bump() {
+        let finding = Finding {
+            check_id: "semver".to_string(),
+            code: "violation".to_string(),
+            level: FindingLevel::Error,
+            message: "breaking".to_string(),
+            location: None,
+            data: Some(serde_json::json!({
+                "package": "lib-x",
+                "version": "0.1.0"
+            })),
+            fingerprint: None,
+            waived: None,
+        };
+
+        let result = finding_to_sarif_result(&finding);
+        assert_eq!(result.rule_id, RULE_SEMVER_BREAKING);
+        assert!(matches!(result.level, SarifLevel::Error));
+    }
+
+    #[test]
+    fn test_finding_to_sarif_result_unknown_check_id_with_empty_location() {
+        let finding = Finding {
+            check_id: "custom".to_string(),
+            code: "unknown".to_string(),
+            level: FindingLevel::Error,
+            message: "custom".to_string(),
+            location: Some(FindingLocation {
+                path: None,
+                line: None,
+                column: None,
+                raw_log: None,
+            }),
+            data: None,
+            fingerprint: None,
+            waived: None,
+        };
+
+        let result = finding_to_sarif_result(&finding);
+        assert_eq!(result.rule_id, RULE_SEMVER_BREAKING);
+        assert!(result.locations.is_empty());
+    }
+
+    #[test]
+    fn test_path_to_uri_relative_path() {
+        let uri = path_to_uri(Path::new("relative/path"));
+        assert!(uri.starts_with("file:///"));
+    }
+
+    #[test]
+    fn test_path_to_uri_unix_like_path() {
+        let uri = path_to_uri_with_cwd(Path::new("/workspace/Cargo.toml"), None);
+        assert!(uri.starts_with("file://"));
+        assert!(uri.contains("Cargo.toml"));
+    }
+
+    #[test]
+    fn test_path_to_uri_relative_without_cwd() {
+        let uri = path_to_uri_with_cwd(Path::new("relative/path"), None);
+        assert_eq!(uri, "file:///relative/path");
     }
 }

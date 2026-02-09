@@ -50,39 +50,46 @@ impl RunMode {
     ///
     /// Returns the detected mode, or `Pr` if detection is ambiguous.
     pub fn detect_from_env() -> RunMode {
+        Self::detect_from_env_with(|key| std::env::var(key).ok())
+    }
+
+    fn detect_from_env_with<F>(mut get: F) -> RunMode
+    where
+        F: FnMut(&str) -> Option<String>,
+    {
         // GitHub Actions: check for tag ref
-        if let Ok(github_ref) = std::env::var("GITHUB_REF") {
+        if let Some(github_ref) = get("GITHUB_REF") {
             if github_ref.starts_with("refs/tags/") {
                 return RunMode::Release;
             }
         }
 
         // GitLab CI: check for commit tag
-        if std::env::var("CI_COMMIT_TAG").is_ok() {
+        if get("CI_COMMIT_TAG").is_some() {
             return RunMode::Release;
         }
 
         // GitHub Actions: check for pull_request event
-        if let Ok(event_name) = std::env::var("GITHUB_EVENT_NAME") {
+        if let Some(event_name) = get("GITHUB_EVENT_NAME") {
             if event_name == "pull_request" || event_name == "pull_request_target" {
                 return RunMode::Pr;
             }
         }
 
         // GitLab CI: check for merge request pipeline
-        if let Ok(source) = std::env::var("CI_PIPELINE_SOURCE") {
+        if let Some(source) = get("CI_PIPELINE_SOURCE") {
             if source == "merge_request_event" {
                 return RunMode::Pr;
             }
         }
 
         // Azure DevOps: check for pull request
-        if std::env::var("SYSTEM_PULLREQUEST_PULLREQUESTID").is_ok() {
+        if get("SYSTEM_PULLREQUEST_PULLREQUESTID").is_some() {
             return RunMode::Pr;
         }
 
         // CircleCI: check for pull request
-        if std::env::var("CIRCLE_PULL_REQUEST").is_ok() {
+        if get("CIRCLE_PULL_REQUEST").is_some() {
             return RunMode::Pr;
         }
 
@@ -594,6 +601,15 @@ impl Default for OutputConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    fn detect_with_env(pairs: &[(&str, &str)]) -> RunMode {
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        RunMode::detect_from_env_with(|key| map.get(key).cloned())
+    }
 
     // =========================================================================
     // Default implementation tests
@@ -1215,5 +1231,105 @@ reason = "Known baseline issue"
     fn test_no_waivers_default() {
         let config = SemverguardConfig::default();
         assert!(config.waivers.is_empty());
+    }
+
+    #[test]
+    fn test_run_mode_detect_from_env_release_github_tag() {
+        assert!(matches!(
+            detect_with_env(&[("GITHUB_REF", "refs/tags/v1.2.3")]),
+            RunMode::Release
+        ));
+    }
+
+    #[test]
+    fn test_run_mode_detect_from_env_release_gitlab_tag() {
+        assert!(matches!(
+            detect_with_env(&[("CI_COMMIT_TAG", "v1.0.0")]),
+            RunMode::Release
+        ));
+    }
+
+    #[test]
+    fn test_run_mode_detect_from_env_pr_github_event() {
+        assert!(matches!(
+            detect_with_env(&[("GITHUB_EVENT_NAME", "pull_request")]),
+            RunMode::Pr
+        ));
+    }
+
+    #[test]
+    fn test_run_mode_detect_from_env_pr_gitlab() {
+        assert!(matches!(
+            detect_with_env(&[("CI_PIPELINE_SOURCE", "merge_request_event")]),
+            RunMode::Pr
+        ));
+    }
+
+    #[test]
+    fn test_run_mode_detect_from_env_pr_azure_circle() {
+        assert!(matches!(
+            detect_with_env(&[("SYSTEM_PULLREQUEST_PULLREQUESTID", "123")]),
+            RunMode::Pr
+        ));
+        assert!(matches!(
+            detect_with_env(&[("CIRCLE_PULL_REQUEST", "url")]),
+            RunMode::Pr
+        ));
+    }
+
+    #[test]
+    fn test_run_mode_detect_from_env_default_pr() {
+        assert!(matches!(detect_with_env(&[]), RunMode::Pr));
+    }
+
+    #[test]
+    fn test_run_mode_detect_from_env_non_tag_ref_defaults_to_pr() {
+        assert!(matches!(
+            detect_with_env(&[("GITHUB_REF", "refs/heads/main")]),
+            RunMode::Pr
+        ));
+    }
+
+    #[test]
+    fn test_run_mode_detect_from_env_non_pr_event_defaults_to_pr() {
+        assert!(matches!(
+            detect_with_env(&[("GITHUB_EVENT_NAME", "push")]),
+            RunMode::Pr
+        ));
+    }
+
+    #[test]
+    fn test_run_mode_detect_from_env_non_merge_request_defaults_to_pr() {
+        assert!(matches!(
+            detect_with_env(&[("CI_PIPELINE_SOURCE", "schedule")]),
+            RunMode::Pr
+        ));
+    }
+
+    #[test]
+    fn test_run_mode_detect_from_env_smoke() {
+        let detected = RunMode::detect_from_env();
+        assert!(matches!(detected, RunMode::Pr | RunMode::Release));
+
+        let resolved = RunMode::Auto.resolve();
+        assert!(matches!(resolved, RunMode::Pr | RunMode::Release));
+    }
+
+    #[test]
+    fn test_color_choice_default() {
+        assert_eq!(ColorChoice::default(), ColorChoice::Auto);
+    }
+
+    #[test]
+    fn test_verbosity_flags() {
+        assert!(Verbosity::Verbose.shows_passed());
+        assert!(Verbosity::Debug.shows_passed());
+        assert!(!Verbosity::Quiet.shows_skipped());
+        assert!(Verbosity::Normal.shows_skipped());
+        assert!(Verbosity::Verbose.shows_timing());
+        assert!(Verbosity::Debug.shows_commands());
+        assert!(Verbosity::Debug.shows_full_output());
+        assert!(Verbosity::Debug.shows_config());
+        assert!(Verbosity::Quiet.is_quiet());
     }
 }

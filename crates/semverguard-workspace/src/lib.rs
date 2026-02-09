@@ -191,31 +191,19 @@ edition = "2021"
 
         // lib-pkg: publish unset -> publishable = true
         let lib_pkg = find_pkg("lib-pkg");
-        assert!(
-            lib_pkg.publishable,
-            "lib-pkg should be publishable (publish unset)"
-        );
+        assert!(lib_pkg.publishable);
 
         // bin-pkg: publish unset -> publishable = true
         let bin_pkg = find_pkg("bin-pkg");
-        assert!(
-            bin_pkg.publishable,
-            "bin-pkg should be publishable (publish unset)"
-        );
+        assert!(bin_pkg.publishable);
 
         // unpublishable-pkg: publish = false -> publishable = false
         let unpub_pkg = find_pkg("unpublishable-pkg");
-        assert!(
-            !unpub_pkg.publishable,
-            "unpublishable-pkg should not be publishable (publish = false)"
-        );
+        assert!(!unpub_pkg.publishable);
 
         // registry-restricted-pkg: publish = ["my-private-registry"] -> publishable = true
         let registry_pkg = find_pkg("registry-restricted-pkg");
-        assert!(
-            registry_pkg.publishable,
-            "registry-restricted-pkg should be publishable (publish = [registry])"
-        );
+        assert!(registry_pkg.publishable);
     }
 
     #[test]
@@ -239,17 +227,11 @@ edition = "2021"
 
         // unpublishable-pkg: has [lib] target -> has_lib = true
         let unpub_pkg = find_pkg("unpublishable-pkg");
-        assert!(
-            unpub_pkg.has_lib,
-            "unpublishable-pkg should have a library target"
-        );
+        assert!(unpub_pkg.has_lib);
 
         // registry-restricted-pkg: has [lib] target -> has_lib = true
         let registry_pkg = find_pkg("registry-restricted-pkg");
-        assert!(
-            registry_pkg.has_lib,
-            "registry-restricted-pkg should have a library target"
-        );
+        assert!(registry_pkg.has_lib);
     }
 
     #[test]
@@ -263,42 +245,22 @@ edition = "2021"
 
         for pkg in &metadata.packages {
             // manifest_path should end with Cargo.toml
-            assert!(
-                pkg.manifest_path.ends_with("Cargo.toml"),
-                "manifest_path should end with Cargo.toml for {}",
-                pkg.name
-            );
+            assert!(pkg.manifest_path.ends_with("Cargo.toml"));
 
             // manifest_path should exist
-            assert!(
-                pkg.manifest_path.exists(),
-                "manifest_path should exist for {}",
-                pkg.name
-            );
+            assert!(pkg.manifest_path.exists());
 
             // manifest_path should be absolute
-            assert!(
-                pkg.manifest_path.is_absolute(),
-                "manifest_path should be absolute for {}",
-                pkg.name
-            );
+            assert!(pkg.manifest_path.is_absolute());
 
             // package_root should be the parent of manifest_path
-            assert_eq!(
-                pkg.package_root,
-                pkg.manifest_path.parent().unwrap(),
-                "package_root should be parent of manifest_path for {}",
-                pkg.name
-            );
+            assert_eq!(pkg.package_root, pkg.manifest_path.parent().unwrap());
 
             // package_root should contain the package name in the path
             let root_str = pkg.package_root.to_string_lossy();
-            assert!(
-                root_str.contains(&pkg.name) || root_str.contains(&pkg.name.replace('-', "_")),
-                "package_root should contain package name for {} (root: {})",
-                pkg.name,
-                root_str
-            );
+            let normalized_name = pkg.name.replace('-', "_");
+            let root_matches = root_str.contains(&pkg.name) || root_str.contains(&normalized_name);
+            assert!(root_matches);
         }
     }
 
@@ -312,29 +274,16 @@ edition = "2021"
             .expect("failed to load workspace");
 
         // workspace_root should be an absolute path that exists
-        assert!(
-            metadata.workspace_root.is_absolute(),
-            "workspace_root should be absolute"
-        );
-        assert!(
-            metadata.workspace_root.exists(),
-            "workspace_root should exist"
-        );
+        assert!(metadata.workspace_root.is_absolute());
+        assert!(metadata.workspace_root.exists());
 
         // The workspace root should contain a Cargo.toml
-        assert!(
-            metadata.workspace_root.join("Cargo.toml").exists(),
-            "workspace_root should contain Cargo.toml"
-        );
+        assert!(metadata.workspace_root.join("Cargo.toml").exists());
 
         // The workspace root path should end with the expected directory name
         // (handling both Unix and Windows path separators and \\?\ prefix)
         let root_str = metadata.workspace_root.to_string_lossy();
-        assert!(
-            root_str.ends_with("test_workspace"),
-            "workspace_root should end with test_workspace: {}",
-            root_str
-        );
+        assert!(root_str.ends_with("test_workspace"));
     }
 
     #[test]
@@ -411,32 +360,76 @@ edition = "2021"
 
         // Empty directory without Cargo.toml should fail
         let result = provider.load(temp.path());
-        assert!(
-            result.is_err(),
-            "should fail on directory without Cargo.toml"
-        );
+        assert!(result.is_err());
 
         let err = result.unwrap_err();
         let err_string = err.to_string();
-        assert!(
-            err_string.contains("cargo metadata failed"),
-            "error should mention cargo metadata failure: {}",
-            err_string
-        );
+        assert!(err_string.contains("cargo metadata failed"));
     }
 
     #[test]
     fn test_excludes_non_workspace_dependencies() {
-        // When cargo metadata is run, it may include dependencies that are not
+        // When cargo metadata is run, it may include path dependencies that are not
         // workspace members. This test verifies we only return workspace members.
-        let temp = create_temp_workspace(&[("sole-member", "1.0.0", true, true)]);
+        let workspace = tempfile::tempdir().expect("temp workspace");
+        let external = tempfile::tempdir().expect("external dep");
+
+        let external_path = external
+            .path()
+            .to_string_lossy()
+            .replace('\\', "/");
+        fs::create_dir_all(external.path().join("src")).unwrap();
+        fs::write(
+            external.path().join("Cargo.toml"),
+            r#"[package]
+name = "external-dep"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+"#,
+        )
+        .unwrap();
+        fs::write(external.path().join("src").join("lib.rs"), "pub fn ext() {}").unwrap();
+
+        fs::write(
+            workspace.path().join("Cargo.toml"),
+            r#"[workspace]
+resolver = "2"
+members = ["sole-member"]
+"#,
+        )
+        .unwrap();
+
+        let member_dir = workspace.path().join("sole-member");
+        fs::create_dir_all(member_dir.join("src")).unwrap();
+        fs::write(
+            member_dir.join("Cargo.toml"),
+            format!(
+                r#"[package]
+name = "sole-member"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+external-dep = {{ path = "{}" }}
+
+[lib]
+path = "src/lib.rs"
+"#,
+                external_path
+            ),
+        )
+        .unwrap();
+        fs::write(member_dir.join("src").join("lib.rs"), "pub fn lib() {}").unwrap();
 
         let provider = CargoMetadataWorkspace;
         let metadata = provider
-            .load(temp.path())
+            .load(workspace.path())
             .expect("failed to load workspace");
 
-        // Should only have our workspace member, not any dependencies
+        // Should only have our workspace member, not the external dependency
         assert_eq!(metadata.packages.len(), 1);
         assert_eq!(metadata.packages[0].name, "sole-member");
     }

@@ -278,6 +278,10 @@ fn main() -> std::process::ExitCode {
 fn run() -> Result<i32> {
     let cli = Cli::parse();
 
+    run_with_cli(cli)
+}
+
+fn run_with_cli(cli: Cli) -> Result<i32> {
     match cli.cmd {
         Commands::PrintConfig(args) => {
             let cfg_path = args
@@ -515,13 +519,14 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
             }
         }
 
-        write_receipt_bundle(
+        let write_result = write_receipt_bundle(
             &artifacts_root,
             &receipt,
             Some(&report),
             sarif_requested,
             cfg.output.pretty_json,
-        )?;
+        );
+        write_result?;
         let code = exit_code_from_receipt(
             &receipt.verdict,
             cfg.output.warn_as_fail,
@@ -594,13 +599,14 @@ fn handle_tool_error(
         }
     }
 
-    write_receipt_bundle(
+    let write_result = write_receipt_bundle(
         artifacts_root,
         &receipt,
         None,
         sarif_requested,
         config.output.pretty_json,
-    )?;
+    );
+    write_result?;
     let code = exit_code_from_receipt(
         &receipt.verdict,
         config.output.warn_as_fail,
@@ -1145,4 +1151,1293 @@ fn run_promote_baseline(args: &PromoteBaselineArgs) -> Result<()> {
     println!("  New:      {}", result.new_value);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+    use semverguard_core::explain::FindingExplanation;
+    use semverguard_types::{
+        BaselineErrorCause, BaselineKind, FailureKind, ListResult, OutputFormat, PackageReport,
+        PackageStatus, RequiredBump, RunMode, RunReport, ScopeMode, SemverCheckOutput, SkippedPackage,
+        ListedPackage, Summary, WaiverEntry,
+    };
+    use std::fs;
+    use std::process::Command;
+    use tempfile::TempDir;
+    use tempfile::tempdir;
+
+    fn base_check_args() -> CheckArgs {
+        CheckArgs {
+            config: None,
+            workspace_root: PathBuf::from("."),
+            mode: None,
+            baseline_rev: None,
+            baseline_version: None,
+            changed: false,
+            dry_run: false,
+            json: None,
+            sarif: None,
+            format: None,
+            artifacts_dir: None,
+            fail_fast: false,
+            cargo_bin: None,
+            engine_args: Vec::new(),
+            progress: ProgressChoiceOpt::Auto,
+        }
+    }
+
+    fn sample_report() -> RunReport {
+        let packages = vec![
+            PackageReport {
+                name: "alpha".to_string(),
+                version: "1.0.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/alpha/Cargo.toml"),
+                status: PackageStatus::Passed,
+                skip_reason: None,
+                duration_ms: 12,
+                command: vec!["cargo".to_string()],
+                engine: None,
+                inferred_required_bump: None,
+                failure_kind: None,
+                baseline_error: None,
+            },
+            PackageReport {
+                name: "beta".to_string(),
+                version: "0.2.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/beta/Cargo.toml"),
+                status: PackageStatus::Skipped,
+                skip_reason: Some("filtered".to_string()),
+                duration_ms: 0,
+                command: vec![],
+                engine: None,
+                inferred_required_bump: None,
+                failure_kind: None,
+                baseline_error: None,
+            },
+            PackageReport {
+                name: "gamma".to_string(),
+                version: "2.1.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/gamma/Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: None,
+                duration_ms: 42,
+                command: vec!["cargo".to_string(), "semver-checks".to_string()],
+                engine: Some(SemverCheckOutput {
+                    exit_code: Some(1),
+                    success: false,
+                    stdout: String::new(),
+                    stderr: "line1\nline2\nline3".to_string(),
+                    required_bump: Some(RequiredBump::Major),
+                }),
+                inferred_required_bump: Some(RequiredBump::Major),
+                failure_kind: Some(FailureKind::SemverViolation),
+                baseline_error: None,
+            },
+            PackageReport {
+                name: "delta".to_string(),
+                version: "3.0.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/delta/Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: Some("engine skipped".to_string()),
+                duration_ms: 1,
+                command: vec![],
+                engine: None,
+                inferred_required_bump: None,
+                failure_kind: Some(FailureKind::BaselineError),
+                baseline_error: Some(BaselineErrorCause::Other {
+                    message: "missing baseline".to_string(),
+                }),
+            },
+        ];
+
+        RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:00:01Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages,
+            summary: Summary {
+                total: 4,
+                passed: 1,
+                failed: 2,
+                skipped: 1,
+            },
+        }
+    }
+
+    fn write_minimal_workspace() -> TempDir {
+        let dir = tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            r#"[workspace]
+resolver = "2"
+members = ["member"]
+"#,
+        )
+        .expect("write workspace Cargo.toml");
+        let member_dir = dir.path().join("member");
+        fs::create_dir_all(member_dir.join("src")).expect("create member src");
+        fs::write(
+            member_dir.join("Cargo.toml"),
+            r#"[package]
+name = "member"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/lib.rs"
+"#,
+        )
+        .expect("write member Cargo.toml");
+        fs::write(member_dir.join("src").join("lib.rs"), "pub fn lib() {}")
+            .expect("write lib.rs");
+        dir
+    }
+
+    struct FakeCargo {
+        _dir: TempDir,
+        path: PathBuf,
+    }
+
+    fn write_fake_cargo(exit_code: i32) -> FakeCargo {
+        let dir = tempdir().expect("tempdir");
+        #[cfg(windows)]
+        let path = dir.path().join("fake_cargo.cmd");
+        #[cfg(not(windows))]
+        let path = dir.path().join("fake_cargo.sh");
+
+        #[cfg(windows)]
+        let script = format!("@echo off\r\necho ok\r\nexit /b {exit_code}\r\n");
+        #[cfg(not(windows))]
+        let script = format!("#!/bin/sh\necho \"ok\"\nexit {exit_code}\n");
+
+        fs::write(&path, script).expect("write fake cargo script");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&path).expect("metadata").permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&path, perms).expect("set permissions");
+        }
+
+        FakeCargo { _dir: dir, path }
+    }
+
+    fn run_git(repo: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .expect("run git");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "git {:?} failed: {}", args, stderr);
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn init_git_repo(repo: &Path) -> String {
+        run_git(repo, &["init"]);
+        run_git(repo, &["config", "user.email", "test@example.com"]);
+        run_git(repo, &["config", "user.name", "Test User"]);
+        run_git(repo, &["add", "."]);
+        run_git(repo, &["commit", "-m", "initial"]);
+        run_git(repo, &["rev-parse", "HEAD"])
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_cockpit_forces_receipt() {
+        let mut cfg = SemverguardConfig::default();
+        let mut args = base_check_args();
+        args.mode = Some(RunModeOpt::Cockpit);
+        args.format = Some(FormatOpt::Json);
+        args.json = Some(PathBuf::from("report.json"));
+
+        apply_cli_overrides(&mut cfg, &args);
+
+        assert!(matches!(cfg.mode, RunMode::Cockpit));
+        assert_eq!(cfg.output.format, OutputFormat::Receipt);
+        assert_eq!(cfg.output.json_path, Some(PathBuf::from("report.json")));
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_json_sets_both_when_text() {
+        let mut cfg = SemverguardConfig::default();
+        let mut args = base_check_args();
+        args.json = Some(PathBuf::from("report.json"));
+
+        apply_cli_overrides(&mut cfg, &args);
+
+        assert_eq!(cfg.output.format, OutputFormat::Both);
+        assert_eq!(cfg.output.json_path, Some(PathBuf::from("report.json")));
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_sarif_overrides_json() {
+        let mut cfg = SemverguardConfig::default();
+        let mut args = base_check_args();
+        args.json = Some(PathBuf::from("report.json"));
+        args.sarif = Some(PathBuf::from("report.sarif.json"));
+
+        apply_cli_overrides(&mut cfg, &args);
+
+        assert_eq!(cfg.output.format, OutputFormat::Sarif);
+        assert_eq!(cfg.output.json_path, Some(PathBuf::from("report.sarif.json")));
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_baseline_scope_and_engine() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.engine.extra_args.push("--flag".to_string());
+
+        let mut args = base_check_args();
+        args.changed = true;
+        args.baseline_rev = Some("origin/main".to_string());
+        args.baseline_version = Some("1.2.3".to_string());
+        args.fail_fast = true;
+        args.cargo_bin = Some(PathBuf::from("cargo-custom"));
+        args.engine_args = vec!["-Z".to_string(), "unstable-options".to_string()];
+
+        apply_cli_overrides(&mut cfg, &args);
+
+        assert!(matches!(cfg.scope.mode, ScopeMode::Changed));
+        assert!(matches!(cfg.baseline.kind, BaselineKind::CratesIo));
+        assert_eq!(cfg.baseline.rev, Some("origin/main".to_string()));
+        assert_eq!(cfg.baseline.version, Some("1.2.3".to_string()));
+        assert!(cfg.engine.fail_fast);
+        assert_eq!(cfg.engine.cargo_bin, Some(PathBuf::from("cargo-custom")));
+        assert_eq!(
+            cfg.engine.extra_args,
+            vec![
+                "--flag".to_string(),
+                "-Z".to_string(),
+                "unstable-options".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_format_override() {
+        let mut cfg = SemverguardConfig::default();
+        let mut args = base_check_args();
+        args.format = Some(FormatOpt::Json);
+
+        apply_cli_overrides(&mut cfg, &args);
+
+        assert_eq!(cfg.output.format, OutputFormat::Json);
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_sarif_with_receipt_keeps_format() {
+        let mut cfg = SemverguardConfig::default();
+        let mut args = base_check_args();
+        args.mode = Some(RunModeOpt::Cockpit);
+        args.sarif = Some(PathBuf::from("report.sarif.json"));
+
+        apply_cli_overrides(&mut cfg, &args);
+
+        assert_eq!(cfg.output.format, OutputFormat::Receipt);
+        assert!(cfg.output.json_path.is_none());
+    }
+
+    #[test]
+    fn test_progress_choice_opt_conversion() {
+        assert_eq!(
+            ProgressChoice::from(ProgressChoiceOpt::Auto),
+            ProgressChoice::Auto
+        );
+        assert_eq!(
+            ProgressChoice::from(ProgressChoiceOpt::Always),
+            ProgressChoice::Always
+        );
+        assert_eq!(
+            ProgressChoice::from(ProgressChoiceOpt::Never),
+            ProgressChoice::Never
+        );
+    }
+
+    #[test]
+    fn test_format_opt_conversion() {
+        assert_eq!(OutputFormat::from(FormatOpt::Text), OutputFormat::Text);
+        assert_eq!(OutputFormat::from(FormatOpt::Json), OutputFormat::Json);
+        assert_eq!(OutputFormat::from(FormatOpt::Both), OutputFormat::Both);
+        assert_eq!(OutputFormat::from(FormatOpt::Sarif), OutputFormat::Sarif);
+        assert_eq!(OutputFormat::from(FormatOpt::Receipt), OutputFormat::Receipt);
+    }
+
+    #[test]
+    fn test_run_mode_opt_conversion() {
+        assert_eq!(RunMode::from(RunModeOpt::Auto), RunMode::Auto);
+        assert_eq!(RunMode::from(RunModeOpt::Pr), RunMode::Pr);
+        assert_eq!(RunMode::from(RunModeOpt::Release), RunMode::Release);
+        assert_eq!(RunMode::from(RunModeOpt::Cockpit), RunMode::Cockpit);
+    }
+
+    #[test]
+    fn test_run_with_cli_validate_config() {
+        let dir = tempdir().expect("tempdir");
+        let config_path = dir.path().join("semverguard.toml");
+        fs::write(&config_path, "").expect("write config");
+        let cli = Cli {
+            cmd: Commands::ValidateConfig(ValidateConfigArgs {
+                config: Some(config_path),
+            }),
+        };
+        let code = run_with_cli(cli).expect("run_with_cli validate_config");
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_run_with_cli_list() {
+        let workspace = write_minimal_workspace();
+        let config_path = workspace.path().join("semverguard.toml");
+        fs::write(&config_path, "").expect("write config");
+        let cli = Cli {
+            cmd: Commands::List(ListArgs {
+                config: Some(config_path),
+                workspace_root: workspace.path().to_path_buf(),
+                baseline_rev: None,
+                changed: false,
+                json: false,
+            }),
+        };
+        let code = run_with_cli(cli).expect("run_with_cli list");
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_run_with_cli_explain() {
+        let cli = Cli {
+            cmd: Commands::Explain(ExplainArgs {
+                check_id: Some("semver".to_string()),
+                code: Some("violation".to_string()),
+                json: false,
+            }),
+        };
+        let code = run_with_cli(cli).expect("run_with_cli explain");
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_run_with_cli_promote_baseline() {
+        let dir = tempdir().expect("tempdir");
+        let config_path = dir.path().join("semverguard.toml");
+        fs::write(
+            &config_path,
+            r#"[baseline]
+kind = "crates-io"
+"#,
+        )
+        .expect("write config");
+        let cli = Cli {
+            cmd: Commands::PromoteBaseline(PromoteBaselineArgs {
+                config: Some(config_path),
+                workspace_root: dir.path().to_path_buf(),
+                rev: "HEAD".to_string(),
+                write: false,
+            }),
+        };
+        let code = run_with_cli(cli).expect("run_with_cli promote_baseline");
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_run_with_cli_check_dry_run() {
+        let workspace = write_minimal_workspace();
+        let config_path = workspace.path().join("semverguard.toml");
+        fs::write(&config_path, "").expect("write config");
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(config_path);
+        args.dry_run = true;
+        let cli = Cli {
+            cmd: Commands::Check(args),
+        };
+        let code = run_with_cli(cli).expect("run_with_cli check");
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_validate_config_reports_errors_and_warnings() {
+        let dir = tempdir().expect("tempdir");
+        let root_file = dir.path().join("root.txt");
+        fs::write(&root_file, "x").expect("write root file");
+        let rustdoc_dir = dir.path().join("rustdoc");
+        fs::create_dir(&rustdoc_dir).expect("create rustdoc dir");
+
+        let mut cfg = SemverguardConfig::default();
+        cfg.scope.include = vec!["[".to_string()];
+        cfg.scope.exclude = vec!["[".to_string()];
+        cfg.baseline.kind = BaselineKind::Git;
+        cfg.baseline.rev = None;
+        cfg.baseline.version = Some("1.0.0".to_string());
+        cfg.scope.mode = ScopeMode::Changed;
+        cfg.baseline.root = Some(root_file);
+        cfg.baseline.rustdoc = Some(rustdoc_dir);
+        cfg.engine.cargo_bin = Some(PathBuf::from("does-not-exist"));
+        cfg.features.all_features = true;
+        cfg.features.only_explicit_features = true;
+        cfg.features.features.clear();
+        cfg.waivers = vec![WaiverEntry {
+            fingerprint: "abc".to_string(),
+            reason: " ".to_string(),
+            ticket: None,
+            expires: Some("2000-01-01".to_string()),
+        }];
+
+        let result = validate_config(&cfg);
+
+        assert!(!result.errors.is_empty());
+        assert!(!result.warnings.is_empty());
+        let has_include_error = result.errors.iter().any(|e| e.contains("scope.include"));
+        assert!(has_include_error, "expected include glob error");
+        let has_baseline_error = result
+            .errors
+            .iter()
+            .any(|e| e.contains("baseline.kind is \"git\""));
+        assert!(has_baseline_error, "expected baseline.rev error");
+        let has_version_warning = result
+            .warnings
+            .iter()
+            .any(|w| w.contains("baseline.version is set"));
+        assert!(has_version_warning, "expected baseline.version warning");
+        let has_expire_warning = result.warnings.iter().any(|w| w.contains("expires"));
+        assert!(has_expire_warning, "expected waiver expiration warning");
+    }
+
+    #[test]
+    fn test_validate_config_missing_paths() {
+        let dir = tempdir().expect("tempdir");
+        let missing_root = dir.path().join("missing-root");
+        let missing_rustdoc = dir.path().join("missing-rustdoc.json");
+
+        let mut cfg = SemverguardConfig::default();
+        cfg.baseline.root = Some(missing_root);
+        cfg.baseline.rustdoc = Some(missing_rustdoc);
+
+        let result = validate_config(&cfg);
+
+        assert!(result
+            .errors
+            .iter()
+            .any(|e| e.contains("baseline.root does not exist")));
+        assert!(result
+            .errors
+            .iter()
+            .any(|e| e.contains("baseline.rustdoc does not exist")));
+    }
+
+    #[test]
+    fn test_validate_config_clean_config() {
+        let cfg = SemverguardConfig::default();
+        let result = validate_config(&cfg);
+        assert!(result.errors.is_empty());
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_validate_config_warnings_only() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.baseline.kind = BaselineKind::Git;
+        cfg.baseline.rev = Some("origin/main".to_string());
+        cfg.baseline.version = Some("1.2.3".to_string());
+
+        let result = validate_config(&cfg);
+
+        assert!(result.errors.is_empty());
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("baseline.version is set")));
+    }
+
+    #[test]
+    fn test_validate_config_changed_mode_requires_git_kind() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.scope.mode = ScopeMode::Changed;
+        cfg.baseline.kind = BaselineKind::CratesIo;
+        cfg.baseline.rev = Some("origin/main".to_string());
+
+        let result = validate_config(&cfg);
+
+        let has_kind_error = result
+            .errors
+            .iter()
+            .any(|e| e.contains("baseline.kind = \"git\""));
+        assert!(has_kind_error, "expected baseline.kind error");
+    }
+
+    #[test]
+    fn test_validate_config_invalid_fingerprint_hex() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.waivers = vec![WaiverEntry {
+            fingerprint: "g".repeat(64),
+            reason: "hex check".to_string(),
+            ticket: None,
+            expires: None,
+        }];
+
+        let result = validate_config(&cfg);
+
+        let has_fingerprint_error = result
+            .errors
+            .iter()
+            .any(|e| e.contains("fingerprint"));
+        assert!(has_fingerprint_error, "expected fingerprint error");
+    }
+
+    #[test]
+    fn test_validate_config_waiver_expired_warning() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.waivers = vec![WaiverEntry {
+            fingerprint: "a".repeat(64),
+            reason: "expired".to_string(),
+            ticket: None,
+            expires: Some("2000-01-01".to_string()),
+        }];
+
+        let result = validate_config(&cfg);
+
+        let has_expire_warning = result.warnings.iter().any(|w| w.contains("expires"));
+        assert!(has_expire_warning, "expected waiver expiration warning");
+    }
+
+    #[test]
+    fn test_validate_config_waiver_invalid_expires_formats_no_warning() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.waivers = vec![
+            WaiverEntry {
+                fingerprint: "a".repeat(64),
+                reason: "invalid day".to_string(),
+                ticket: None,
+                expires: Some("2024-02-30".to_string()),
+            },
+            WaiverEntry {
+                fingerprint: "b".repeat(64),
+                reason: "invalid month".to_string(),
+                ticket: None,
+                expires: Some("2024-13-01".to_string()),
+            },
+            WaiverEntry {
+                fingerprint: "c".repeat(64),
+                reason: "parse fail".to_string(),
+                ticket: None,
+                expires: Some("2024-xx-01".to_string()),
+            },
+            WaiverEntry {
+                fingerprint: "d".repeat(64),
+                reason: "bad format".to_string(),
+                ticket: None,
+                expires: Some("not-a-date".to_string()),
+            },
+            WaiverEntry {
+                fingerprint: "e".repeat(64),
+                reason: "short format".to_string(),
+                ticket: None,
+                expires: Some("bad".to_string()),
+            },
+        ];
+
+        let result = validate_config(&cfg);
+        assert!(!result.warnings.iter().any(|w| w.contains("expires")));
+    }
+
+    #[test]
+    fn test_run_validate_config_missing_file_is_ok() {
+        let args = ValidateConfigArgs {
+            config: Some(PathBuf::from("does-not-exist.toml")),
+        };
+        let result = run_validate_config(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_validate_config_valid_file_ok() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("semverguard.toml");
+        fs::write(
+            &path,
+            r#"[baseline]
+kind = "crates-io"
+"#,
+        )
+        .expect("write config");
+
+        let args = ValidateConfigArgs { config: Some(path) };
+        let result = run_validate_config(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_validate_config_warns_only() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("semverguard.toml");
+        fs::write(
+            &path,
+            r#"[baseline]
+kind = "crates-io"
+rev = "abc123"
+"#,
+        )
+        .expect("write config");
+
+        let args = ValidateConfigArgs { config: Some(path) };
+        let result = run_validate_config(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_validate_config_errors() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("semverguard.toml");
+        fs::write(
+            &path,
+            r#"[baseline]
+kind = "git"
+"#,
+        )
+        .expect("write config");
+
+        let args = ValidateConfigArgs { config: Some(path) };
+        let result = run_validate_config(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_validate_config_errors_and_warnings_prints_sections() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("semverguard.toml");
+        fs::write(
+            &path,
+            r#"mode = "pr"
+[baseline]
+kind = "git"
+version = "1.0.0"
+
+[scope]
+include = ["["]
+"#,
+        )
+        .expect("write config");
+
+        let args = ValidateConfigArgs { config: Some(path) };
+        let result = run_validate_config(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_explain_unknown_check_id_errors() {
+        let args = ExplainArgs {
+            check_id: Some("unknown-check".to_string()),
+            code: None,
+            json: false,
+        };
+        let result = run_explain(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_explain_json_listing_ok() {
+        let args = ExplainArgs {
+            check_id: None,
+            code: None,
+            json: true,
+        };
+        let result = run_explain(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_explain_listing_text_ok() {
+        let args = ExplainArgs {
+            check_id: None,
+            code: None,
+            json: false,
+        };
+        let result = run_explain(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_explain_known_check_id_text_ok() {
+        let args = ExplainArgs {
+            check_id: Some("semver".to_string()),
+            code: None,
+            json: false,
+        };
+        let result = run_explain(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_explain_known_check_id_json_ok() {
+        let args = ExplainArgs {
+            check_id: Some("semver".to_string()),
+            code: None,
+            json: true,
+        };
+        let result = run_explain(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_explain_specific_entry_json_ok() {
+        let args = ExplainArgs {
+            check_id: Some("semver".to_string()),
+            code: Some("violation".to_string()),
+            json: true,
+        };
+        let result = run_explain(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_explain_specific_entry_text_ok() {
+        let args = ExplainArgs {
+            check_id: Some("semver".to_string()),
+            code: Some("violation".to_string()),
+            json: false,
+        };
+        let result = run_explain(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_explain_unknown_code_errors() {
+        let args = ExplainArgs {
+            check_id: Some("semver".to_string()),
+            code: Some("nope".to_string()),
+            json: false,
+        };
+        let result = run_explain(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_print_explanation_with_causes_and_fixes() {
+        static CAUSES: &[&str] = &["cause one"];
+        static FIXES: &[&str] = &["fix one"];
+        let entry = FindingExplanation {
+            check_id: "semver",
+            code: "violation",
+            title: "Semver violation",
+            description: "Breaking change detected.",
+            causes: CAUSES,
+            fixes: FIXES,
+            default_level: "error",
+        };
+        print_explanation(&entry);
+    }
+
+    #[test]
+    fn test_print_explanation_without_causes_or_fixes() {
+        static EMPTY: &[&str] = &[];
+        let entry = FindingExplanation {
+            check_id: "semver",
+            code: "violation",
+            title: "Semver violation",
+            description: "Breaking change detected.",
+            causes: EMPTY,
+            fixes: EMPTY,
+            default_level: "error",
+        };
+        print_explanation(&entry);
+    }
+
+    #[test]
+    fn test_handle_tool_error_without_receipt_returns_err() {
+        let cfg = SemverguardConfig::default();
+        let dir = tempdir().expect("tempdir");
+        let result = handle_tool_error(
+            anyhow::anyhow!("boom"),
+            &cfg,
+            dir.path(),
+            dir.path().join("artifacts").as_path(),
+            false,
+            false,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_handle_tool_error_writes_receipt_in_cockpit_mode() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.mode = RunMode::Cockpit;
+        let dir = tempdir().expect("tempdir");
+        let artifacts = dir.path().join("artifacts");
+
+        let result = handle_tool_error(
+            anyhow::anyhow!("boom"),
+            &cfg,
+            dir.path(),
+            &artifacts,
+            true,
+            false,
+        )
+        .expect("should write receipt");
+
+        assert_eq!(result, 0);
+        assert!(artifacts.join("report.json").exists());
+        assert!(artifacts.join("comment.md").exists());
+    }
+
+    #[test]
+    fn test_handle_tool_error_receipt_non_cockpit_writes_bundle() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.output.format = OutputFormat::Receipt;
+        cfg.mode = RunMode::Pr;
+        let dir = tempdir().expect("tempdir");
+        let artifacts = dir.path().join("artifacts");
+
+        let result = handle_tool_error(
+            anyhow::anyhow!("boom"),
+            &cfg,
+            dir.path(),
+            &artifacts,
+            true,
+            false,
+        )
+        .expect("should write receipt");
+
+        assert_eq!(result, 1);
+        assert!(artifacts.join("report.json").exists());
+        assert!(artifacts.join("comment.md").exists());
+    }
+
+    #[test]
+    fn test_handle_tool_error_cockpit_write_failure_returns_code() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.output.format = OutputFormat::Receipt;
+        cfg.mode = RunMode::Cockpit;
+        let dir = tempdir().expect("tempdir");
+        let artifacts = dir.path().join("artifacts");
+        fs::write(&artifacts, "not a dir").expect("write artifacts file");
+
+        let result = handle_tool_error(
+            anyhow::anyhow!("boom"),
+            &cfg,
+            dir.path(),
+            &artifacts,
+            true,
+            false,
+        )
+        .expect("should return code");
+
+        assert_eq!(result, 1);
+    }
+
+    #[test]
+    fn test_run_check_dry_run_lists_packages() {
+        let workspace = write_minimal_workspace();
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(workspace.path().join("semverguard.toml"));
+        args.dry_run = true;
+
+        let code = run_check(&args).expect("run_check dry-run");
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_run_check_handles_runner_error() {
+        let workspace = write_minimal_workspace();
+        let config_path = workspace.path().join("semverguard.toml");
+        fs::write(
+            &config_path,
+            r#"[scope]
+include = ["["]
+"#,
+        )
+        .expect("write config");
+
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(config_path);
+
+        let result = run_check(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_check_cockpit_write_failure_returns_code() {
+        let workspace = write_minimal_workspace();
+        let config_path = workspace.path().join("semverguard.toml");
+        fs::write(
+            &config_path,
+            r#"mode = "cockpit"
+
+[scope]
+include = ["nonexistent-*"]
+"#,
+        )
+        .expect("write config");
+        let artifacts = workspace.path().join("artifacts");
+        fs::write(&artifacts, "not a dir").expect("write artifacts file");
+
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(config_path);
+        args.artifacts_dir = Some(artifacts);
+
+        let code = run_check(&args).expect("run_check cockpit failure");
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn test_run_check_text_output_success() {
+        let workspace = write_minimal_workspace();
+        let fake_cargo = write_fake_cargo(0);
+
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(workspace.path().join("semverguard.toml"));
+        args.mode = Some(RunModeOpt::Release);
+        args.cargo_bin = Some(fake_cargo.path.clone());
+
+        let code = run_check(&args).expect("run_check text output");
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_run_check_receipt_cockpit_writes_artifacts() {
+        let workspace = write_minimal_workspace();
+        let fake_cargo = write_fake_cargo(0);
+        let artifacts = workspace.path().join("artifacts");
+
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(workspace.path().join("semverguard.toml"));
+        args.mode = Some(RunModeOpt::Cockpit);
+        args.cargo_bin = Some(fake_cargo.path.clone());
+        args.artifacts_dir = Some(artifacts.clone());
+        args.sarif = Some(artifacts.join("report.sarif.json"));
+
+        let code = run_check(&args).expect("run_check cockpit");
+        assert_eq!(code, 0);
+        assert!(artifacts.join("report.json").exists());
+        assert!(artifacts.join("comment.md").exists());
+        assert!(artifacts.join("sarif.json").exists());
+    }
+
+    #[test]
+    fn test_run_check_receipt_non_cockpit_returns_code() {
+        let workspace = write_minimal_workspace();
+        let fake_cargo = write_fake_cargo(0);
+        let artifacts = workspace.path().join("artifacts");
+
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(workspace.path().join("semverguard.toml"));
+        args.format = Some(FormatOpt::Receipt);
+        args.cargo_bin = Some(fake_cargo.path.clone());
+        args.artifacts_dir = Some(artifacts.clone());
+
+        let code = run_check(&args).expect("run_check receipt");
+        assert_eq!(code, 0);
+        assert!(artifacts.join("report.json").exists());
+        assert!(artifacts.join("comment.md").exists());
+    }
+
+    #[test]
+    fn test_run_check_invalid_config_receipt_returns_tool_error_code() {
+        let workspace = write_minimal_workspace();
+        let config_path = workspace.path().join("semverguard.toml");
+        fs::write(&config_path, "[baseline\nkind = \"git\"").expect("write invalid toml");
+        let artifacts = workspace.path().join("artifacts");
+
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(config_path);
+        args.format = Some(FormatOpt::Receipt);
+        args.artifacts_dir = Some(artifacts.clone());
+
+        let code = run_check(&args).expect("run_check invalid config");
+        assert_eq!(code, 1);
+        assert!(artifacts.join("report.json").exists());
+        assert!(artifacts.join("comment.md").exists());
+    }
+
+    #[test]
+    fn test_run_check_missing_workspace_root_receipt() {
+        let dir = tempdir().expect("tempdir");
+        let missing_root = dir.path().join("missing-workspace");
+        let artifacts = dir.path().join("artifacts");
+
+        let mut args = base_check_args();
+        args.workspace_root = missing_root;
+        args.config = Some(dir.path().join("semverguard.toml"));
+        args.format = Some(FormatOpt::Receipt);
+        args.artifacts_dir = Some(artifacts.clone());
+
+        let code = run_check(&args).expect("run_check missing workspace");
+        assert_eq!(code, 1);
+        assert!(artifacts.join("report.json").exists());
+        assert!(artifacts.join("comment.md").exists());
+    }
+
+    #[test]
+    fn test_run_list_json_output() {
+        let workspace = write_minimal_workspace();
+        let args = ListArgs {
+            config: Some(workspace.path().join("semverguard.toml")),
+            workspace_root: workspace.path().to_path_buf(),
+            baseline_rev: None,
+            changed: false,
+            json: true,
+        };
+
+        let result = run_list(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_list_changed_text_output() {
+        let workspace = write_minimal_workspace();
+        let baseline = init_git_repo(workspace.path());
+        fs::write(
+            workspace.path().join("member").join("src").join("lib.rs"),
+            "pub fn lib() {}\npub fn changed() {}\n",
+        )
+        .expect("update lib.rs");
+        run_git(workspace.path(), &["add", "."]);
+        run_git(workspace.path(), &["commit", "-m", "change"]);
+        let args = ListArgs {
+            config: Some(workspace.path().join("semverguard.toml")),
+            workspace_root: workspace.path().to_path_buf(),
+            baseline_rev: Some(baseline),
+            changed: true,
+            json: false,
+        };
+
+        run_list(&args).expect("run_list failed");
+    }
+
+    #[test]
+    fn test_print_list_text_empty() {
+        let result = ListResult {
+            workspace_root: PathBuf::from("/workspace"),
+            would_check: vec![],
+            would_skip: vec![],
+        };
+        print_list_text(&result);
+    }
+
+    #[test]
+    fn test_print_list_text_with_skips() {
+        let result = ListResult {
+            workspace_root: PathBuf::from("/workspace"),
+            would_check: vec![ListedPackage {
+                name: "alpha".to_string(),
+                version: "1.0.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/alpha/Cargo.toml"),
+            }],
+            would_skip: vec![SkippedPackage {
+                name: "beta".to_string(),
+                version: "1.2.3".to_string(),
+                manifest_path: PathBuf::from("/workspace/beta/Cargo.toml"),
+                reason: "filtered".to_string(),
+            }],
+        };
+        print_list_text(&result);
+    }
+
+    #[test]
+    fn test_run_promote_baseline_crates_io_noop() {
+        let dir = tempdir().expect("tempdir");
+        let config_path = dir.path().join("semverguard.toml");
+        fs::write(
+            &config_path,
+            r#"[baseline]
+kind = "crates-io"
+"#,
+        )
+        .expect("write config");
+
+        let args = PromoteBaselineArgs {
+            config: Some(config_path),
+            workspace_root: dir.path().to_path_buf(),
+            rev: "HEAD".to_string(),
+            write: false,
+        };
+
+        let result = run_promote_baseline(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_promote_baseline_missing_config_file_errors() {
+        let dir = tempdir().expect("tempdir");
+        let config_path = dir.path().join("missing.toml");
+        fs::write(dir.path().join("README.md"), "init").expect("write file");
+        let _head = init_git_repo(dir.path());
+
+        let args = PromoteBaselineArgs {
+            config: Some(config_path),
+            workspace_root: dir.path().to_path_buf(),
+            rev: "HEAD".to_string(),
+            write: false,
+        };
+
+        let result = run_promote_baseline(&args);
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Config file not found"));
+    }
+
+    #[test]
+    fn test_run_promote_baseline_head_dry_run() {
+        let dir = tempdir().expect("tempdir");
+        let config_path = dir.path().join("semverguard.toml");
+        fs::write(
+            &config_path,
+            r#"[baseline]
+kind = "git"
+rev = "oldrev"
+"#,
+        )
+        .expect("write config");
+        let _head = init_git_repo(dir.path());
+
+        let args = PromoteBaselineArgs {
+            config: Some(config_path.clone()),
+            workspace_root: dir.path().to_path_buf(),
+            rev: "HEAD".to_string(),
+            write: false,
+        };
+
+        run_promote_baseline(&args).expect("run_promote_baseline failed");
+        let content = fs::read_to_string(&config_path).expect("read config");
+        assert!(content.contains("oldrev"));
+    }
+
+    #[test]
+    fn test_run_promote_baseline_ref_write() {
+        let dir = tempdir().expect("tempdir");
+        let config_path = dir.path().join("semverguard.toml");
+        fs::write(
+            &config_path,
+            r#"[baseline]
+kind = "git"
+"#,
+        )
+        .expect("write config");
+        let head = init_git_repo(dir.path());
+        run_git(dir.path(), &["tag", "v1.0.0"]);
+        let args = PromoteBaselineArgs {
+            config: Some(config_path.clone()),
+            workspace_root: dir.path().to_path_buf(),
+            rev: "v1.0.0".to_string(),
+            write: true,
+        };
+
+        run_promote_baseline(&args).expect("run_promote_baseline failed");
+        let content = fs::read_to_string(&config_path).expect("read config");
+        assert!(content.contains(&head));
+    }
+
+    #[test]
+    fn test_emit_outputs_writes_json() {
+        let dir = tempdir().expect("tempdir");
+        let mut cfg = SemverguardConfig::default();
+        cfg.output.format = OutputFormat::Json;
+        cfg.output.pretty_json = false;
+        cfg.output.json_path = Some(dir.path().join("report.json"));
+
+        emit_outputs(&cfg, &sample_report()).expect("emit outputs");
+
+        assert!(cfg.output.json_path.unwrap().exists());
+    }
+
+    #[test]
+    fn test_emit_outputs_writes_sarif() {
+        let dir = tempdir().expect("tempdir");
+        let mut cfg = SemverguardConfig::default();
+        cfg.output.format = OutputFormat::Sarif;
+        cfg.output.pretty_json = false;
+        cfg.output.json_path = Some(dir.path().join("report.sarif.json"));
+
+        emit_outputs(&cfg, &sample_report()).expect("emit outputs");
+
+        assert!(cfg.output.json_path.unwrap().exists());
+    }
+
+    #[test]
+    fn test_emit_outputs_both_and_receipt_noop() {
+        let dir = tempdir().expect("tempdir");
+        let mut cfg = SemverguardConfig::default();
+        cfg.output.format = OutputFormat::Both;
+        cfg.output.pretty_json = false;
+        cfg.output.json_path = Some(dir.path().join("report.json"));
+
+        emit_outputs(&cfg, &sample_report()).expect("emit outputs");
+        let json_path = cfg.output.json_path.clone().expect("json path");
+        assert!(json_path.exists());
+
+        cfg.output.format = OutputFormat::Receipt;
+        cfg.output.json_path = None;
+        emit_outputs(&cfg, &sample_report()).expect("emit outputs receipt");
+    }
+
+    #[test]
+    fn test_emit_outputs_text() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.output.format = OutputFormat::Text;
+        emit_outputs(&cfg, &sample_report()).expect("emit outputs text");
+    }
+
+    #[test]
+    fn test_print_config_ok() {
+        let cfg = SemverguardConfig::default();
+        print_config(&cfg).expect("print config");
+    }
+
+    #[test]
+    fn test_write_json_prints_when_no_path() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.output.pretty_json = true;
+        cfg.output.json_path = None;
+        write_json(&cfg, &sample_report()).expect("write json");
+    }
+
+    #[test]
+    fn test_write_sarif_prints_when_no_path() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.output.pretty_json = true;
+        cfg.output.json_path = None;
+        write_sarif(&cfg, &sample_report()).expect("write sarif");
+    }
+
+    #[test]
+    fn test_print_text_covers_status_branches() {
+        print_text(&sample_report());
+    }
+
+    #[test]
+    fn test_tail_lines_basic() {
+        let s = "a\nb\nc\nd";
+        assert_eq!(tail_lines(s, 2), "c\nd");
+        assert_eq!(tail_lines(s, 10), "a\nb\nc\nd");
+        assert_eq!(tail_lines(s, 0), "");
+    }
+
+    proptest! {
+        #[test]
+        fn prop_tail_lines_matches_suffix(lines in proptest::collection::vec("[^\\n]*", 0..20), n in 0usize..40) {
+            let s = lines.join("\n");
+            let line_vec: Vec<&str> = s.lines().collect();
+            let start = line_vec.len().saturating_sub(n);
+            let expected = line_vec[start..].join("\n");
+            prop_assert_eq!(tail_lines(&s, n), expected);
+        }
+
+        #[test]
+        fn prop_indent_prefixes_each_line(lines in proptest::collection::vec("[^\\n]*", 0..20), prefix in "[^\\n]{0,8}") {
+            let s = lines.join("\n");
+            let expected = s
+                .lines()
+                .map(|line| format!("{prefix}{line}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            prop_assert_eq!(indent(&s, &prefix), expected);
+        }
+    }
 }

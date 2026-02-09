@@ -277,6 +277,104 @@ mod tests {
     }
 
     #[test]
+    fn test_classify_output_unknown_exit_code() {
+        let out = output(Some(3), "", "", None);
+        assert!(matches!(classify_output(&out), FailureKind::Unknown));
+    }
+
+    #[test]
+    fn test_classify_output_unknown_exit_code_with_baseline_error() {
+        let out = output(Some(3), "baseline not found", "", None);
+        assert!(matches!(classify_output(&out), FailureKind::BaselineError));
+    }
+
+    #[test]
+    fn test_classify_engine_error_simple() {
+        let err = SemverguardError::Engine("engine failed".to_string());
+        assert_eq!(classify_engine_error(&err), FailureKind::ToolError);
+    }
+
+    #[test]
+    fn test_classify_engine_error_detailed_baseline() {
+        let err = SemverguardError::Engine("error: unknown revision 'origin/main'".to_string());
+        let result = classify_engine_error_detailed(&err, None);
+        assert_eq!(result.kind, FailureKind::BaselineError);
+        assert!(matches!(
+            result.baseline_cause,
+            Some(BaselineErrorCause::RevisionNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn test_classify_engine_error_detailed_baseline_without_cause() {
+        let err = SemverguardError::InvalidConfig("baseline status ok".to_string());
+        let result = classify_engine_error_detailed(&err, None);
+        assert_eq!(result.kind, FailureKind::ToolError);
+        assert!(result.baseline_cause.is_none());
+    }
+
+    #[test]
+    fn test_detect_baseline_error_generic_other() {
+        let cause = detect_baseline_error_from_message("baseline failed for unknown reason", None);
+        assert!(matches!(cause, Some(BaselineErrorCause::Other { .. })));
+    }
+
+    #[test]
+    fn test_detect_baseline_error_none() {
+        let cause = detect_baseline_error_from_message("all good here", None);
+        assert!(cause.is_none());
+    }
+
+    #[test]
+    fn test_detect_baseline_error_baseline_without_failure_returns_none() {
+        let cause = detect_baseline_error_from_message("baseline status ok", None);
+        assert!(cause.is_none());
+    }
+
+    #[test]
+    fn test_extract_revision_single_and_double_quotes() {
+        let single = extract_revision("error: unknown revision 'origin/main'");
+        assert_eq!(single, Some("origin/main".to_string()));
+        let double = extract_revision("error: unknown revision \"v1.0.0\"");
+        assert_eq!(double, Some("v1.0.0".to_string()));
+    }
+
+    #[test]
+    fn test_extract_revision_empty_or_too_long_returns_none() {
+        let empty = extract_revision("error: unknown revision ''");
+        assert!(empty.is_none());
+        let long = "a".repeat(120);
+        let long_msg = format!("error: unknown revision \"{}\"", long);
+        assert!(extract_revision(&long_msg).is_none());
+    }
+
+    #[test]
+    fn test_extract_revision_missing_closing_quotes_returns_none() {
+        let missing_single = extract_revision("error: unknown revision 'origin/main");
+        assert!(missing_single.is_none());
+        let missing_double = extract_revision("error: unknown revision \"origin/main");
+        assert!(missing_double.is_none());
+    }
+
+    #[test]
+    fn test_extract_detail_snippet() {
+        let detail = extract_detail("rustdoc: failed to generate output", &["rustdoc"]);
+        assert!(detail.is_some());
+    }
+
+    #[test]
+    fn test_extract_detail_none() {
+        let detail = extract_detail("unrelated text", &["rustdoc"]);
+        assert!(detail.is_none());
+    }
+
+    #[test]
+    fn test_extract_detail_keyword_only_returns_none() {
+        let detail = extract_detail("rustdoc", &["rustdoc"]);
+        assert!(detail.is_none());
+    }
+
+    #[test]
     fn test_classify_output_tool_error_exit_code() {
         let out = output(Some(2), "some error", "", None);
         assert!(matches!(classify_output(&out), FailureKind::ToolError));
@@ -318,11 +416,12 @@ mod tests {
         );
         let result = classify_output_detailed(&out, None);
         assert_eq!(result.kind, FailureKind::BaselineError);
-        if let Some(BaselineErrorCause::RevisionNotFound { rev }) = result.baseline_cause {
-            assert_eq!(rev, "origin/missing");
-        } else {
-            panic!("Expected RevisionNotFound");
-        }
+        assert_eq!(
+            result.baseline_cause,
+            Some(BaselineErrorCause::RevisionNotFound {
+                rev: "origin/missing".to_string(),
+            })
+        );
     }
 
     #[test]
@@ -335,13 +434,12 @@ mod tests {
         );
         let result = classify_output_detailed(&out, Some("new-feature"));
         assert_eq!(result.kind, FailureKind::BaselineError);
-        if let Some(BaselineErrorCause::CrateAbsentFromBaseline { crate_name }) =
-            result.baseline_cause
-        {
-            assert_eq!(crate_name, "new-feature");
-        } else {
-            panic!("Expected CrateAbsentFromBaseline");
-        }
+        assert_eq!(
+            result.baseline_cause,
+            Some(BaselineErrorCause::CrateAbsentFromBaseline {
+                crate_name: "new-feature".to_string(),
+            })
+        );
     }
 
     #[test]
@@ -370,11 +468,13 @@ mod tests {
         );
         let result = classify_output_detailed(&out, Some("my-internal-crate"));
         assert_eq!(result.kind, FailureKind::BaselineError);
-        if let Some(BaselineErrorCause::NotPublished { crate_name, .. }) = result.baseline_cause {
-            assert_eq!(crate_name, "my-internal-crate");
-        } else {
-            panic!("Expected NotPublished");
-        }
+        assert_eq!(
+            result.baseline_cause,
+            Some(BaselineErrorCause::NotPublished {
+                crate_name: "my-internal-crate".to_string(),
+                version: None,
+            })
+        );
     }
 
     #[test]

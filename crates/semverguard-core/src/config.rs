@@ -37,3 +37,77 @@ pub fn load_config(path: &Path) -> Result<SemverguardConfig> {
         toml::from_str(&raw).with_context(|| format!("invalid TOML in {}", path.display()))?;
     Ok(cfg)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use semverguard_types::{BaselineKind, OutputFormat};
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_ensure_workspace_root_ok() {
+        let dir = tempdir().unwrap();
+        ensure_workspace_root(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn test_ensure_workspace_root_missing() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        let err = ensure_workspace_root(&missing).unwrap_err();
+        assert!(err.to_string().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_ensure_workspace_root_not_dir() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("file.txt");
+        fs::write(&file_path, "data").unwrap();
+        let err = ensure_workspace_root(&file_path).unwrap_err();
+        assert!(err.to_string().contains("not a directory"));
+    }
+
+    #[test]
+    fn test_load_config_missing_returns_default() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("semverguard.toml");
+        let cfg = load_config(&path).unwrap();
+        assert!(matches!(cfg.baseline.kind, BaselineKind::CratesIo));
+        assert!(matches!(cfg.output.format, OutputFormat::Text));
+    }
+
+    #[test]
+    fn test_load_config_invalid_toml() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("semverguard.toml");
+        fs::write(&path, "[baseline\nkind = \"git\"").unwrap();
+        let err = load_config(&path).unwrap_err();
+        assert!(err.to_string().contains("invalid TOML"));
+    }
+
+    #[test]
+    fn test_load_config_parses_values() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("semverguard.toml");
+        fs::write(
+            &path,
+            r#"
+[baseline]
+kind = "git"
+rev = "origin/main"
+
+[output]
+format = "receipt"
+pretty_json = false
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_config(&path).unwrap();
+        assert!(matches!(cfg.baseline.kind, BaselineKind::Git));
+        assert_eq!(cfg.baseline.rev.as_deref(), Some("origin/main"));
+        assert!(matches!(cfg.output.format, OutputFormat::Receipt));
+        assert!(!cfg.output.pretty_json);
+    }
+}

@@ -896,6 +896,12 @@ mod tests {
         );
         assert!(!cause.is_expected());
         assert!(!cause.is_ci_recoverable());
+
+        let cause_no_detail = BaselineErrorCause::RustdocGenerationFailed { detail: None };
+        assert_eq!(
+            cause_no_detail.to_string(),
+            "failed to generate baseline rustdoc"
+        );
     }
 
     #[test]
@@ -987,11 +993,37 @@ mod tests {
 
         assert_eq!(deserialized.failure_kind, Some(FailureKind::BaselineError));
         assert!(deserialized.baseline_error.is_some());
-        if let Some(BaselineErrorCause::ShallowClone { detail }) = deserialized.baseline_error {
-            assert_eq!(detail, Some("CI clone depth 1".to_string()));
-        } else {
-            panic!("Expected ShallowClone variant");
+        let detail = shallow_clone_detail(&deserialized);
+        assert_eq!(detail, Some("CI clone depth 1"));
+    }
+
+    fn shallow_clone_detail(report: &PackageReport) -> Option<&str> {
+        match &report.baseline_error {
+            Some(BaselineErrorCause::ShallowClone { detail }) => detail.as_deref(),
+            _ => None,
         }
+    }
+
+    #[test]
+    fn test_package_report_with_non_shallow_baseline_error_detail_none() {
+        let report = PackageReport {
+            name: "failing-crate".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: PathBuf::from("/workspace/Cargo.toml"),
+            status: PackageStatus::Failed,
+            skip_reason: None,
+            duration_ms: 100,
+            command: vec!["cargo".to_string(), "semver-checks".to_string()],
+            engine: None,
+            inferred_required_bump: None,
+            failure_kind: Some(FailureKind::BaselineError),
+            baseline_error: Some(BaselineErrorCause::RevisionNotFound {
+                rev: "deadbeef".to_string(),
+            }),
+        };
+
+        let detail = shallow_clone_detail(&report);
+        assert!(detail.is_none());
     }
 
     // =========================================================================

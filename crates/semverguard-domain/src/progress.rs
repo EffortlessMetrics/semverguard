@@ -83,3 +83,37 @@ where
         (self.0)(event)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn test_noop_progress_callback() {
+        let cb = NoopProgressCallback;
+        cb.on_progress(ProgressEvent::TotalPackages { total: 1 });
+        cb.on_progress(ProgressEvent::Finished {
+            passed: 1,
+            failed: 0,
+            skipped: 0,
+        });
+    }
+
+    #[test]
+    fn test_fn_progress_callback_records_event() {
+        let events: Arc<Mutex<Vec<ProgressEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        let recorder = {
+            let events = Arc::clone(&events);
+            FnProgressCallback(move |event| {
+                events.lock().unwrap().push(event);
+            })
+        };
+
+        recorder.on_progress(ProgressEvent::TotalPackages { total: 3 });
+
+        let events = events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], ProgressEvent::TotalPackages { total: 3 }));
+    }
+}

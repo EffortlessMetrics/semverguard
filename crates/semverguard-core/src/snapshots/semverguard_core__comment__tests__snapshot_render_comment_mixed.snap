@@ -1,0 +1,16 @@
+---
+source: crates/semverguard-core/src/comment.rs:598
+expression: comment
+---
+## Semverguard: fail
+Summary: total=3 passed=1 failed=1 skipped=1
+
+### Failed packages
+- alpha 1.2.3 (required bump: Major) (log: raw/alpha.stderr.log)
+
+### Skipped packages
+- beta 0.9.0 (filtered by glob)
+
+### Warnings / tool errors
+- lint.api: public API changed [WAIVED: legacy]
+- tool.runtime: cargo-semver-checks failed

@@ -108,6 +108,24 @@ mod tests {
     }
 
     #[test]
+    fn test_exit_code_ignores_non_failed_packages() {
+        let report = make_report(vec![PackageReport {
+            name: "pkg-pass".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: PathBuf::from("/workspace/Cargo.toml"),
+            status: PackageStatus::Passed,
+            skip_reason: None,
+            duration_ms: 0,
+            command: vec![],
+            engine: None,
+            inferred_required_bump: None,
+            failure_kind: None,
+            baseline_error: None,
+        }]);
+        assert_eq!(exit_code_from_report(&report, RunMode::Pr, false), 0);
+    }
+
+    #[test]
     fn test_exit_1_on_tool_error() {
         let report = make_report(vec![failed_pkg(FailureKind::ToolError)]);
         assert_eq!(exit_code_from_report(&report, RunMode::Pr, false), 1);

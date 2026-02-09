@@ -296,6 +296,13 @@ mod tests {
     }
 
     #[test]
+    fn test_finding_level_severity_rank() {
+        assert_eq!(FindingLevel::Error.severity_rank(), 0);
+        assert_eq!(FindingLevel::Warning.severity_rank(), 1);
+        assert_eq!(FindingLevel::Info.severity_rank(), 2);
+    }
+
+    #[test]
     fn test_receipt_json_roundtrip() {
         let report = sample_report();
         let receipt = SensorReportV1 {
@@ -421,9 +428,6 @@ mod tests {
         };
 
         let value = serde_json::to_value(receipt).unwrap();
-        assert!(
-            validator.is_valid(&value),
-            "receipt should validate against schema"
-        );
+        assert!(validator.is_valid(&value), "receipt should validate against schema");
     }
 }
