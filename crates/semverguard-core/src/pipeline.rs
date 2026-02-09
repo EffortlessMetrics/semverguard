@@ -382,8 +382,8 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
-    use tempfile::tempdir;
     use std::{fs, io};
+    use tempfile::tempdir;
 
     struct MockWorkspaceProvider {
         metadata: WorkspaceMetadata,
@@ -441,9 +441,7 @@ mod tests {
                         required_bump: Some(RequiredBump::Major),
                     },
                 )),
-                EngineOutcome::Error => Err(SemverguardError::Engine(
-                    "engine failed".to_string(),
-                )),
+                EngineOutcome::Error => Err(SemverguardError::Engine("engine failed".to_string())),
             }
         }
     }
@@ -485,11 +483,9 @@ mod tests {
     fn write_minimal_workspace(root: &Path) -> io::Result<()> {
         let crate_root = root.join("crates").join("my-crate");
         fs::create_dir_all(crate_root.join("src"))?;
-        let workspace_toml =
-            "[workspace]\nresolver = \"2\"\nmembers = [\"crates/my-crate\"]\n";
+        let workspace_toml = "[workspace]\nresolver = \"2\"\nmembers = [\"crates/my-crate\"]\n";
         fs::write(root.join("Cargo.toml"), workspace_toml)?;
-        let crate_toml =
-            "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n";
+        let crate_toml = "[package]\nname = \"my-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n";
         fs::write(crate_root.join("Cargo.toml"), crate_toml)?;
         fs::write(crate_root.join("src/lib.rs"), "pub fn hello() {}\n")?;
         Ok(())
@@ -603,7 +599,10 @@ mod tests {
 
         let events = events.lock().unwrap();
         let has_total = events.iter().any(|event| {
-            matches!(event, semverguard_domain::ProgressEvent::TotalPackages { total: 1 })
+            matches!(
+                event,
+                semverguard_domain::ProgressEvent::TotalPackages { total: 1 }
+            )
         });
         assert!(has_total);
         let has_finished = events.iter().any(|event| {
@@ -643,11 +642,13 @@ mod tests {
         assert!(result.report.is_none());
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.receipt.verdict.status, VerdictStatus::Fail);
-        assert!(result
-            .receipt
-            .findings
-            .iter()
-            .any(|f| f.check_id == crate::receipt::CHECK_TOOL));
+        assert!(
+            result
+                .receipt
+                .findings
+                .iter()
+                .any(|f| f.check_id == crate::receipt::CHECK_TOOL)
+        );
     }
 
     #[test]
@@ -756,11 +757,13 @@ mod tests {
         assert!(result.report.is_none());
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.receipt.verdict.status, VerdictStatus::Fail);
-        assert!(result
-            .receipt
-            .findings
-            .iter()
-            .any(|f| f.check_id == crate::receipt::CHECK_TOOL));
+        assert!(
+            result
+                .receipt
+                .findings
+                .iter()
+                .any(|f| f.check_id == crate::receipt::CHECK_TOOL)
+        );
     }
 
     #[cfg(feature = "default-adapters")]

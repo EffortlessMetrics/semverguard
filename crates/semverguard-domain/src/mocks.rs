@@ -80,8 +80,17 @@ impl MockWorkspaceProvider {
     /// Assert that `load` was called exactly once with the expected root.
     pub fn assert_called_once_with(&self, expected_root: &Path) {
         let calls = self.calls.lock().unwrap();
-        assert_eq!(calls.len(), 1, "Expected exactly 1 call, got {}", calls.len());
-        assert_eq!(calls[0].workspace_root, expected_root, "Expected workspace_root {:?}, got {:?}", expected_root, calls[0].workspace_root);
+        assert_eq!(
+            calls.len(),
+            1,
+            "Expected exactly 1 call, got {}",
+            calls.len()
+        );
+        assert_eq!(
+            calls[0].workspace_root, expected_root,
+            "Expected workspace_root {:?}, got {:?}",
+            expected_root, calls[0].workspace_root
+        );
     }
 
     /// Set a new result to return on the next call.
@@ -184,10 +193,27 @@ impl MockGitProvider {
         expected_head: &str,
     ) {
         let calls = self.calls.lock().unwrap();
-        assert_eq!(calls.len(), 1, "Expected exactly 1 call, got {}", calls.len());
-        assert_eq!(calls[0].workspace_root, expected_root, "Expected workspace_root {:?}, got {:?}", expected_root, calls[0].workspace_root);
-        assert_eq!(calls[0].base, expected_base, "Expected base {:?}, got {:?}", expected_base, calls[0].base);
-        assert_eq!(calls[0].head, expected_head, "Expected head {:?}, got {:?}", expected_head, calls[0].head);
+        assert_eq!(
+            calls.len(),
+            1,
+            "Expected exactly 1 call, got {}",
+            calls.len()
+        );
+        assert_eq!(
+            calls[0].workspace_root, expected_root,
+            "Expected workspace_root {:?}, got {:?}",
+            expected_root, calls[0].workspace_root
+        );
+        assert_eq!(
+            calls[0].base, expected_base,
+            "Expected base {:?}, got {:?}",
+            expected_base, calls[0].base
+        );
+        assert_eq!(
+            calls[0].head, expected_head,
+            "Expected head {:?}, got {:?}",
+            expected_head, calls[0].head
+        );
     }
 
     /// Set a new result to return on the next call.
@@ -349,7 +375,11 @@ impl MockSemverEngine {
     /// Assert that `check` was called exactly N times.
     pub fn assert_call_count(&self, expected: usize) {
         let actual = self.call_count();
-        assert_eq!(actual, expected, "Expected {} calls, got {}", expected, actual);
+        assert_eq!(
+            actual, expected,
+            "Expected {} calls, got {}",
+            expected, actual
+        );
     }
 
     /// Assert that `check` was not called.

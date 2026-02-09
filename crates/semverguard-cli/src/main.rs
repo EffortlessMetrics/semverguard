@@ -1159,9 +1159,9 @@ mod tests {
     use proptest::prelude::*;
     use semverguard_core::explain::FindingExplanation;
     use semverguard_types::{
-        BaselineErrorCause, BaselineKind, FailureKind, ListResult, OutputFormat, PackageReport,
-        PackageStatus, RequiredBump, RunMode, RunReport, ScopeMode, SemverCheckOutput, SkippedPackage,
-        ListedPackage, Summary, WaiverEntry,
+        BaselineErrorCause, BaselineKind, FailureKind, ListResult, ListedPackage, OutputFormat,
+        PackageReport, PackageStatus, RequiredBump, RunMode, RunReport, ScopeMode,
+        SemverCheckOutput, SkippedPackage, Summary, WaiverEntry,
     };
     use std::fs;
     use std::process::Command;
@@ -1291,8 +1291,7 @@ path = "src/lib.rs"
 "#,
         )
         .expect("write member Cargo.toml");
-        fs::write(member_dir.join("src").join("lib.rs"), "pub fn lib() {}")
-            .expect("write lib.rs");
+        fs::write(member_dir.join("src").join("lib.rs"), "pub fn lib() {}").expect("write lib.rs");
         dir
     }
 
@@ -1382,7 +1381,10 @@ path = "src/lib.rs"
         apply_cli_overrides(&mut cfg, &args);
 
         assert_eq!(cfg.output.format, OutputFormat::Sarif);
-        assert_eq!(cfg.output.json_path, Some(PathBuf::from("report.sarif.json")));
+        assert_eq!(
+            cfg.output.json_path,
+            Some(PathBuf::from("report.sarif.json"))
+        );
     }
 
     #[test]
@@ -1462,7 +1464,10 @@ path = "src/lib.rs"
         assert_eq!(OutputFormat::from(FormatOpt::Json), OutputFormat::Json);
         assert_eq!(OutputFormat::from(FormatOpt::Both), OutputFormat::Both);
         assert_eq!(OutputFormat::from(FormatOpt::Sarif), OutputFormat::Sarif);
-        assert_eq!(OutputFormat::from(FormatOpt::Receipt), OutputFormat::Receipt);
+        assert_eq!(
+            OutputFormat::from(FormatOpt::Receipt),
+            OutputFormat::Receipt
+        );
     }
 
     #[test]
@@ -1617,14 +1622,18 @@ kind = "crates-io"
 
         let result = validate_config(&cfg);
 
-        assert!(result
-            .errors
-            .iter()
-            .any(|e| e.contains("baseline.root does not exist")));
-        assert!(result
-            .errors
-            .iter()
-            .any(|e| e.contains("baseline.rustdoc does not exist")));
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("baseline.root does not exist"))
+        );
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("baseline.rustdoc does not exist"))
+        );
     }
 
     #[test]
@@ -1645,10 +1654,12 @@ kind = "crates-io"
         let result = validate_config(&cfg);
 
         assert!(result.errors.is_empty());
-        assert!(result
-            .warnings
-            .iter()
-            .any(|w| w.contains("baseline.version is set")));
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|w| w.contains("baseline.version is set"))
+        );
     }
 
     #[test]
@@ -1679,10 +1690,7 @@ kind = "crates-io"
 
         let result = validate_config(&cfg);
 
-        let has_fingerprint_error = result
-            .errors
-            .iter()
-            .any(|e| e.contains("fingerprint"));
+        let has_fingerprint_error = result.errors.iter().any(|e| e.contains("fingerprint"));
         assert!(has_fingerprint_error, "expected fingerprint error");
     }
 

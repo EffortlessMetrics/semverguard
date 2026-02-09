@@ -272,9 +272,7 @@ pub fn create_progress_reporter(choice: ProgressChoice) -> Box<dyn ProgressRepor
     match choice {
         ProgressChoice::Never => Box::new(NoopProgress::new()),
         ProgressChoice::Always => Box::new(TerminalProgress::new()),
-        ProgressChoice::Auto => {
-            auto_progress_reporter(std::io::stderr().is_terminal())
-        }
+        ProgressChoice::Auto => auto_progress_reporter(std::io::stderr().is_terminal()),
     }
 }
 
@@ -352,8 +350,8 @@ impl semverguard_domain::ProgressCallback for ProgressCallbackAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
     use semverguard_domain::ProgressCallback;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_progress_choice_default() {
@@ -505,7 +503,11 @@ mod tests {
                 ProgressEvent::PackageSkipped { name, reason } => {
                     format!("skip:{name}:{reason}")
                 }
-                ProgressEvent::Finished { passed, failed, skipped } => {
+                ProgressEvent::Finished {
+                    passed,
+                    failed,
+                    skipped,
+                } => {
                     format!("finished:{passed}:{failed}:{skipped}")
                 }
             };

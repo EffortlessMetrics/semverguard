@@ -535,8 +535,14 @@ mod tests {
         let beta_pos = comment.find("beta").unwrap();
         let zebra_pos = comment.find("zebra").unwrap();
 
-        assert!(alpha_pos < beta_pos, "alpha should come before beta in sorted output");
-        assert!(beta_pos < zebra_pos, "beta should come before zebra in sorted output");
+        assert!(
+            alpha_pos < beta_pos,
+            "alpha should come before beta in sorted output"
+        );
+        assert!(
+            beta_pos < zebra_pos,
+            "beta should come before zebra in sorted output"
+        );
     }
 
     #[test]

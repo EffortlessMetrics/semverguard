@@ -428,6 +428,9 @@ mod tests {
         };
 
         let value = serde_json::to_value(receipt).unwrap();
-        assert!(validator.is_valid(&value), "receipt should validate against schema");
+        assert!(
+            validator.is_valid(&value),
+            "receipt should validate against schema"
+        );
     }
 }

@@ -114,6 +114,9 @@ mod tests {
 
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0], ProgressEvent::TotalPackages { total: 3 }));
+        assert!(matches!(
+            events[0],
+            ProgressEvent::TotalPackages { total: 3 }
+        ));
     }
 }

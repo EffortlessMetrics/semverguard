@@ -885,7 +885,10 @@ mod tests {
 
         for result in &sarif.runs[0].results {
             for loc in &result.locations {
-                assert!(loc.physical_location.region.is_none(), "HONESTY POLICY VIOLATION: region data should never be emitted");
+                assert!(
+                    loc.physical_location.region.is_none(),
+                    "HONESTY POLICY VIOLATION: region data should never be emitted"
+                );
             }
         }
     }
@@ -898,7 +901,13 @@ mod tests {
 
         for result in &sarif.runs[0].results {
             for loc in &result.locations {
-                assert!(loc.physical_location.artifact_location.uri.contains("Cargo.toml"), "HONESTY POLICY: location should point to Cargo.toml manifest");
+                assert!(
+                    loc.physical_location
+                        .artifact_location
+                        .uri
+                        .contains("Cargo.toml"),
+                    "HONESTY POLICY: location should point to Cargo.toml manifest"
+                );
             }
         }
     }
@@ -1432,7 +1441,12 @@ mod tests {
 
         let result = package_to_sarif_result(&pkg);
         assert!(result.message.text.contains("Engine output:"));
-        assert!(result.message.text.contains(&format!("{}...", &long_err[..200])));
+        assert!(
+            result
+                .message
+                .text
+                .contains(&format!("{}...", &long_err[..200]))
+        );
         let props = result.properties.as_ref().unwrap();
         assert!(props.raw_stderr_log.is_some());
         assert!(result.message.text.contains("minor version bump"));
@@ -1464,7 +1478,10 @@ mod tests {
         let result = finding_to_sarif_result(&finding);
         assert_eq!(result.rule_id, RULE_SEMVER_PATCH_REQUIRED);
         assert!(matches!(result.level, SarifLevel::Note));
-        assert_eq!(result.locations[0].physical_location.artifact_location.uri, "raw/log.txt");
+        assert_eq!(
+            result.locations[0].physical_location.artifact_location.uri,
+            "raw/log.txt"
+        );
         let props = result.properties.as_ref().unwrap();
         assert_eq!(props.raw_stderr_log, Some("raw/log.txt".to_string()));
     }

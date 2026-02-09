@@ -1205,7 +1205,10 @@ mod tests {
         for window in receipt.findings.windows(2) {
             let a = &window[0];
             let b = &window[1];
-            assert!(finding_sort_key(a) <= finding_sort_key(b), "Findings should be sorted by severity, then package, then fingerprint");
+            assert!(
+                finding_sort_key(a) <= finding_sort_key(b),
+                "Findings should be sorted by severity, then package, then fingerprint"
+            );
         }
     }
 
@@ -1236,8 +1239,7 @@ mod tests {
         // With severity-first sort, errors come before warnings
         assert!(receipt.findings.len() >= 2);
         assert!(
-            receipt.findings[0].level.severity_rank()
-                <= receipt.findings[1].level.severity_rank()
+            receipt.findings[0].level.severity_rank() <= receipt.findings[1].level.severity_rank()
         );
     }
 
@@ -1286,13 +1288,17 @@ mod tests {
         assert_eq!(summary.baseline_kind, "git");
         assert_eq!(summary.baseline_ref, Some("origin/main".to_string()));
 
-        let report_patch = report_with_required_bumps(&[RequiredBump::Patch, RequiredBump::Unknown]);
+        let report_patch =
+            report_with_required_bumps(&[RequiredBump::Patch, RequiredBump::Unknown]);
         let summary_patch = build_summary_data(&report_patch, &BaselineConfig::default());
         assert_eq!(summary_patch.max_required_bump, Some("patch".to_string()));
 
         let report_unknown = report_with_required_bumps(&[RequiredBump::Unknown]);
         let summary_unknown = build_summary_data(&report_unknown, &BaselineConfig::default());
-        assert_eq!(summary_unknown.max_required_bump, Some("unknown".to_string()));
+        assert_eq!(
+            summary_unknown.max_required_bump,
+            Some("unknown".to_string())
+        );
     }
 
     #[test]
@@ -1454,7 +1460,11 @@ mod tests {
         ];
         let re = regex_lite::Regex::new(r"^[a-z0-9_]+(\.[a-z0-9_]+)*$").unwrap();
         for token in &tokens {
-            assert!(re.is_match(token), "Token '{}' does not match expected format", token);
+            assert!(
+                re.is_match(token),
+                "Token '{}' does not match expected format",
+                token
+            );
         }
     }
 
@@ -1475,7 +1485,11 @@ mod tests {
         ];
         let re = regex_lite::Regex::new(r"^[a-z][a-z0-9_]*$").unwrap();
         for token in &tokens {
-            assert!(re.is_match(token), "Reason token '{}' does not match expected format", token);
+            assert!(
+                re.is_match(token),
+                "Reason token '{}' does not match expected format",
+                token
+            );
         }
     }
 
@@ -1517,14 +1531,22 @@ mod tests {
         let result = normalize_receipt_path(workspace, Path::new("/other/dir/Cargo.toml"));
         // On the same filesystem, strip_prefix fails, path contains ..
         // The implementation falls back to filename
-        assert!(!result.contains(".."), "Result should not contain '..' path traversal: {}", result);
+        assert!(
+            !result.contains(".."),
+            "Result should not contain '..' path traversal: {}",
+            result
+        );
     }
 
     #[test]
     fn test_normalize_receipt_path_forward_slashes() {
         let workspace = Path::new("/workspace");
         let result = normalize_receipt_path(workspace, Path::new("/workspace/foo/bar/Cargo.toml"));
-        assert!(!result.contains('\\'), "Normalized path should not contain backslashes: {}", result);
+        assert!(
+            !result.contains('\\'),
+            "Normalized path should not contain backslashes: {}",
+            result
+        );
     }
 
     #[test]
@@ -1532,7 +1554,11 @@ mod tests {
         let workspace = Path::new("/workspace");
         let result =
             normalize_receipt_path(workspace, Path::new("/workspace/crates/lib/Cargo.toml"));
-        assert!(!result.starts_with('/'), "Normalized path should be relative, not absolute: {}", result);
+        assert!(
+            !result.starts_with('/'),
+            "Normalized path should be relative, not absolute: {}",
+            result
+        );
     }
 
     #[test]
@@ -1540,8 +1566,16 @@ mod tests {
         let workspace = Path::new("/workspace");
         let result =
             normalize_receipt_path(workspace, Path::new("artifacts/semverguard/report.json"));
-        assert!(!result.contains('\\'), "Relative path should use forward slashes: {}", result);
-        assert!(!result.contains(".."), "Relative path should not contain path traversal: {}", result);
+        assert!(
+            !result.contains('\\'),
+            "Relative path should use forward slashes: {}",
+            result
+        );
+        assert!(
+            !result.contains(".."),
+            "Relative path should not contain path traversal: {}",
+            result
+        );
     }
 
     #[test]
@@ -1564,7 +1598,10 @@ mod tests {
         let data = receipt.data.as_ref().expect("data should be present");
         assert!(data.findings_total.is_none());
         assert!(data.findings_emitted.is_none());
-        assert!(!receipt.verdict.reasons.contains(&"truncated".to_string()), "Verdict should not contain 'truncated' reason when under limit");
+        assert!(
+            !receipt.verdict.reasons.contains(&"truncated".to_string()),
+            "Verdict should not contain 'truncated' reason when under limit"
+        );
     }
 
     #[test]
@@ -1784,7 +1821,10 @@ mod tests {
         let findings = build_findings(&report, &artifacts, report.workspace_root.as_path());
         assert_eq!(findings.len(), 4);
 
-        let semver = findings.iter().find(|f| f.check_id == CHECK_SEMVER).unwrap();
+        let semver = findings
+            .iter()
+            .find(|f| f.check_id == CHECK_SEMVER)
+            .unwrap();
         let semver_data = semver.data.as_ref().unwrap();
         assert_eq!(
             semver_data
@@ -1804,7 +1844,10 @@ mod tests {
         let tool = findings.iter().find(|f| f.check_id == CHECK_TOOL).unwrap();
         assert!(tool.message.contains("tool crashed"));
 
-        let unknown = findings.iter().find(|f| f.check_id == CHECK_ENGINE).unwrap();
+        let unknown = findings
+            .iter()
+            .find(|f| f.check_id == CHECK_ENGINE)
+            .unwrap();
         assert!(unknown.message.contains("unknown error"));
     }
 
@@ -2134,12 +2177,8 @@ mod tests {
     fn test_write_receipt_bundle_compact_json() {
         let dir = tempdir().unwrap();
         let report = sample_report();
-        let artifacts = build_artifact_index(
-            Path::new("workspace"),
-            dir.path(),
-            Some(&report),
-            false,
-        );
+        let artifacts =
+            build_artifact_index(Path::new("workspace"), dir.path(), Some(&report), false);
         let receipt = build_receipt(
             Some(&report),
             &[],
@@ -2211,7 +2250,12 @@ mod tests {
             None,
         );
         assert_eq!(receipt.findings.len(), MAX_FINDINGS);
-        assert!(receipt.verdict.reasons.contains(&REASON_TRUNCATED.to_string()));
+        assert!(
+            receipt
+                .verdict
+                .reasons
+                .contains(&REASON_TRUNCATED.to_string())
+        );
     }
 
     #[test]

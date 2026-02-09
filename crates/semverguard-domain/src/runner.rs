@@ -2321,7 +2321,11 @@ mod tests {
         assert_eq!(failed.status, PackageStatus::Failed);
         assert!(failed.skip_reason.is_some());
         let reason = failed.skip_reason.as_ref().unwrap();
-        assert!(reason.contains("engine") || reason.contains("cargo-semver-checks"), "Error reason should mention engine or cargo-semver-checks: {}", reason);
+        assert!(
+            reason.contains("engine") || reason.contains("cargo-semver-checks"),
+            "Error reason should mention engine or cargo-semver-checks: {}",
+            reason
+        );
     }
 
     #[test]
@@ -2383,9 +2387,17 @@ mod tests {
 
         // Error should not be a raw stack trace but an actionable message
         let reason = failed.skip_reason.as_ref().unwrap();
-        assert!(!reason.contains("at src/") && !reason.contains("panicked"), "Error should be user-friendly, not a stack trace: {}", reason);
+        assert!(
+            !reason.contains("at src/") && !reason.contains("panicked"),
+            "Error should be user-friendly, not a stack trace: {}",
+            reason
+        );
         // Should contain some indication of what went wrong
-        assert!(reason.len() > 10, "Error message should be descriptive: {}", reason);
+        assert!(
+            reason.len() > 10,
+            "Error message should be descriptive: {}",
+            reason
+        );
     }
 
     #[test]
@@ -2449,7 +2461,13 @@ mod tests {
 
     #[test]
     fn test_with_progress_records_events() {
-        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let packages = vec![make_package(
+            "pkg-a",
+            "1.0.0",
+            "/workspace/pkg-a",
+            true,
+            true,
+        )];
         let metadata = make_workspace_metadata(packages);
         let workspace = MockWorkspaceProvider::new(metadata);
         let engine = MockSemverEngine::new(vec![MockSemverEngine::success_result()]);
@@ -2463,12 +2481,22 @@ mod tests {
         let _ = runner.run(Path::new("/workspace"), &config).unwrap();
 
         let events = events.lock().unwrap();
-        assert!(events.iter().any(|e| matches!(e, ProgressEvent::Finished { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ProgressEvent::Finished { .. }))
+        );
     }
 
     #[test]
     fn test_set_progress_overrides_callback() {
-        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let packages = vec![make_package(
+            "pkg-a",
+            "1.0.0",
+            "/workspace/pkg-a",
+            true,
+            true,
+        )];
         let metadata = make_workspace_metadata(packages);
         let workspace = MockWorkspaceProvider::new(metadata);
         let engine = MockSemverEngine::new(vec![MockSemverEngine::success_result()]);
@@ -2483,12 +2511,22 @@ mod tests {
         let _ = runner.run(Path::new("/workspace"), &config).unwrap();
 
         let events = events.lock().unwrap();
-        assert!(events.iter().any(|e| matches!(e, ProgressEvent::PackageStarted { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ProgressEvent::PackageStarted { .. }))
+        );
     }
 
     #[test]
     fn test_explicit_packages_all_missing_errors() {
-        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let packages = vec![make_package(
+            "pkg-a",
+            "1.0.0",
+            "/workspace/pkg-a",
+            true,
+            true,
+        )];
         let metadata = make_workspace_metadata(packages);
         let workspace = MockWorkspaceProvider::new(metadata);
         let engine = MockSemverEngine::new(vec![]);
@@ -2497,7 +2535,10 @@ mod tests {
         let mut config = default_config();
         config.scope.explicit_packages = vec!["missing".to_string()];
         let err = runner.run(Path::new("/workspace"), &config).unwrap_err();
-        assert!(err.to_string().contains("none of the specified packages exist"));
+        assert!(
+            err.to_string()
+                .contains("none of the specified packages exist")
+        );
     }
 
     #[test]
@@ -2519,10 +2560,12 @@ mod tests {
 
         let result = runner.run(Path::new("/workspace"), &config).unwrap();
         assert_eq!(result.packages.len(), 2);
-        assert!(result
-            .packages
-            .iter()
-            .all(|p| p.status == PackageStatus::Skipped));
+        assert!(
+            result
+                .packages
+                .iter()
+                .all(|p| p.status == PackageStatus::Skipped)
+        );
     }
 
     #[test]
@@ -2543,21 +2586,29 @@ mod tests {
         config.scope.skip_publish_false = true;
         config.scope.skip_no_lib = true;
 
-        let result = runner.list_packages(Path::new("/workspace"), &config).unwrap();
+        let result = runner
+            .list_packages(Path::new("/workspace"), &config)
+            .unwrap();
         assert_eq!(result.would_check.len(), 1);
         assert_eq!(result.would_check[0].name, "pkg-a");
-        assert!(result
-            .would_skip
-            .iter()
-            .any(|p| p.reason.contains("publish = false")));
-        assert!(result
-            .would_skip
-            .iter()
-            .any(|p| p.reason.contains("no library")));
-        assert!(result
-            .would_skip
-            .iter()
-            .any(|p| p.reason.contains("include/exclude")));
+        assert!(
+            result
+                .would_skip
+                .iter()
+                .any(|p| p.reason.contains("publish = false"))
+        );
+        assert!(
+            result
+                .would_skip
+                .iter()
+                .any(|p| p.reason.contains("no library"))
+        );
+        assert!(
+            result
+                .would_skip
+                .iter()
+                .any(|p| p.reason.contains("include/exclude"))
+        );
     }
 
     #[test]
@@ -2577,7 +2628,9 @@ mod tests {
         config.baseline.kind = BaselineKind::Git;
         config.baseline.rev = Some("origin/main".to_string());
 
-        let result = runner.list_packages(Path::new("/workspace"), &config).unwrap();
+        let result = runner
+            .list_packages(Path::new("/workspace"), &config)
+            .unwrap();
         assert_eq!(result.would_check.len(), 1);
         assert_eq!(result.would_check[0].name, "pkg-a");
         assert_eq!(result.would_skip.len(), 1);
@@ -2586,7 +2639,13 @@ mod tests {
 
     #[test]
     fn test_list_packages_changed_mode_requires_baseline_rev() {
-        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let packages = vec![make_package(
+            "pkg-a",
+            "1.0.0",
+            "/workspace/pkg-a",
+            true,
+            true,
+        )];
         let metadata = make_workspace_metadata(packages);
         let workspace = MockWorkspaceProvider::new(metadata);
         let git = MockGitProvider::new(vec![]);
@@ -2606,7 +2665,13 @@ mod tests {
 
     #[test]
     fn test_list_packages_changed_mode_requires_git_kind() {
-        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let packages = vec![make_package(
+            "pkg-a",
+            "1.0.0",
+            "/workspace/pkg-a",
+            true,
+            true,
+        )];
         let metadata = make_workspace_metadata(packages);
         let workspace = MockWorkspaceProvider::new(metadata);
         let git = MockGitProvider::new(vec![]);
@@ -2626,7 +2691,13 @@ mod tests {
 
     #[test]
     fn test_list_packages_changed_mode_requires_git_provider() {
-        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let packages = vec![make_package(
+            "pkg-a",
+            "1.0.0",
+            "/workspace/pkg-a",
+            true,
+            true,
+        )];
         let metadata = make_workspace_metadata(packages);
         let workspace = MockWorkspaceProvider::new(metadata);
         let engine = MockSemverEngine::new(vec![]);
@@ -2645,7 +2716,13 @@ mod tests {
 
     #[test]
     fn test_run_changed_mode_requires_baseline_rev() {
-        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let packages = vec![make_package(
+            "pkg-a",
+            "1.0.0",
+            "/workspace/pkg-a",
+            true,
+            true,
+        )];
         let metadata = make_workspace_metadata(packages);
         let workspace = MockWorkspaceProvider::new(metadata);
         let git = MockGitProvider::new(vec![]);
@@ -2663,7 +2740,13 @@ mod tests {
 
     #[test]
     fn test_run_changed_mode_requires_git_kind() {
-        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let packages = vec![make_package(
+            "pkg-a",
+            "1.0.0",
+            "/workspace/pkg-a",
+            true,
+            true,
+        )];
         let metadata = make_workspace_metadata(packages);
         let workspace = MockWorkspaceProvider::new(metadata);
         let git = MockGitProvider::new(vec![]);
@@ -2681,7 +2764,13 @@ mod tests {
 
     #[test]
     fn test_run_changed_mode_requires_git_provider() {
-        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let packages = vec![make_package(
+            "pkg-a",
+            "1.0.0",
+            "/workspace/pkg-a",
+            true,
+            true,
+        )];
         let metadata = make_workspace_metadata(packages);
         let workspace = MockWorkspaceProvider::new(metadata);
         let engine = MockSemverEngine::new(vec![]);
@@ -2699,7 +2788,9 @@ mod tests {
     #[test]
     fn test_normalize_rel_ignores_root_components() {
         let normalized = normalize_rel(Path::new("/workspace/pkg-a"));
-        assert!(normalized.ends_with("workspace\\pkg-a") || normalized.ends_with("workspace/pkg-a"));
+        assert!(
+            normalized.ends_with("workspace\\pkg-a") || normalized.ends_with("workspace/pkg-a")
+        );
     }
 
     #[test]

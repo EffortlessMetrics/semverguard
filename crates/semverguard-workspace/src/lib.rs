@@ -374,10 +374,7 @@ edition = "2021"
         let workspace = tempfile::tempdir().expect("temp workspace");
         let external = tempfile::tempdir().expect("external dep");
 
-        let external_path = external
-            .path()
-            .to_string_lossy()
-            .replace('\\', "/");
+        let external_path = external.path().to_string_lossy().replace('\\', "/");
         fs::create_dir_all(external.path().join("src")).unwrap();
         fs::write(
             external.path().join("Cargo.toml"),
@@ -391,7 +388,11 @@ path = "src/lib.rs"
 "#,
         )
         .unwrap();
-        fs::write(external.path().join("src").join("lib.rs"), "pub fn ext() {}").unwrap();
+        fs::write(
+            external.path().join("src").join("lib.rs"),
+            "pub fn ext() {}",
+        )
+        .unwrap();
 
         fs::write(
             workspace.path().join("Cargo.toml"),

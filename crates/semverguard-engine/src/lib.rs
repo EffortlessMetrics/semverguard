@@ -1255,10 +1255,18 @@ Major version bump required.
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
         // Verify flag-value pairs are adjacent
-        let flags = ["--manifest-path", "--baseline-rev", "--baseline-root", "--features"];
+        let flags = [
+            "--manifest-path",
+            "--baseline-rev",
+            "--baseline-root",
+            "--features",
+        ];
 
         for flag in flags {
-            let idx = args.iter().position(|a| a == flag).expect("flag should exist");
+            let idx = args
+                .iter()
+                .position(|a| a == flag)
+                .expect("flag should exist");
             assert!(idx + 1 < args.len());
             // Value should not be another flag (starts with --)
             assert!(!args[idx + 1].starts_with("--"));
