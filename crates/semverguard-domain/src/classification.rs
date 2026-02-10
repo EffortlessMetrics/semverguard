@@ -258,34 +258,38 @@ mod tests {
         }
     }
 
+    fn assert_baseline_cause_variant(
+        actual: &Option<BaselineErrorCause>,
+        expected: BaselineErrorCause,
+    ) {
+        assert_eq!(
+            actual.as_ref().map(std::mem::discriminant),
+            Some(std::mem::discriminant(&expected))
+        );
+    }
+
     #[test]
     fn test_classify_output_semver_violation_exit_code() {
         let out = output(Some(1), "", "", None);
-        assert!(matches!(
-            classify_output(&out),
-            FailureKind::SemverViolation
-        ));
+        assert_eq!(classify_output(&out), FailureKind::SemverViolation);
     }
 
     #[test]
     fn test_classify_output_semver_violation_required_bump() {
         let out = output(Some(2), "", "", Some(RequiredBump::Major));
-        assert!(matches!(
-            classify_output(&out),
-            FailureKind::SemverViolation
-        ));
+        assert_eq!(classify_output(&out), FailureKind::SemverViolation);
     }
 
     #[test]
     fn test_classify_output_unknown_exit_code() {
         let out = output(Some(3), "", "", None);
-        assert!(matches!(classify_output(&out), FailureKind::Unknown));
+        assert_eq!(classify_output(&out), FailureKind::Unknown);
     }
 
     #[test]
     fn test_classify_output_unknown_exit_code_with_baseline_error() {
         let out = output(Some(3), "baseline not found", "", None);
-        assert!(matches!(classify_output(&out), FailureKind::BaselineError));
+        assert_eq!(classify_output(&out), FailureKind::BaselineError);
     }
 
     #[test]
@@ -299,10 +303,12 @@ mod tests {
         let err = SemverguardError::Engine("error: unknown revision 'origin/main'".to_string());
         let result = classify_engine_error_detailed(&err, None);
         assert_eq!(result.kind, FailureKind::BaselineError);
-        assert!(matches!(
+        assert_eq!(
             result.baseline_cause,
-            Some(BaselineErrorCause::RevisionNotFound { .. })
-        ));
+            Some(BaselineErrorCause::RevisionNotFound {
+                rev: "origin/main".to_string(),
+            })
+        );
     }
 
     #[test]
@@ -316,7 +322,55 @@ mod tests {
     #[test]
     fn test_detect_baseline_error_generic_other() {
         let cause = detect_baseline_error_from_message("baseline failed for unknown reason", None);
-        assert!(matches!(cause, Some(BaselineErrorCause::Other { .. })));
+        assert_baseline_cause_variant(&cause, BaselineErrorCause::Other {
+            message: String::new(),
+        });
+    }
+
+    #[test]
+    fn test_detect_baseline_error_revision_not_found_phrase() {
+        let cause = detect_baseline_error_from_message("revision not found in baseline", None);
+        assert_baseline_cause_variant(
+            &cause,
+            BaselineErrorCause::RevisionNotFound {
+                rev: String::new(),
+            },
+        );
+    }
+
+    #[test]
+    fn test_detect_baseline_error_crate_absent_without_name() {
+        let cause =
+            detect_baseline_error_from_message("crate missing in baseline", None);
+        assert_eq!(
+            cause,
+            Some(BaselineErrorCause::CrateAbsentFromBaseline {
+                crate_name: "unknown".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn test_detect_baseline_error_rustdoc_error_only() {
+        let cause =
+            detect_baseline_error_from_message("baseline rustdoc error output", None);
+        assert_baseline_cause_variant(
+            &cause,
+            BaselineErrorCause::RustdocGenerationFailed { detail: None },
+        );
+    }
+
+    #[test]
+    fn test_detect_baseline_error_not_published_without_name() {
+        let cause =
+            detect_baseline_error_from_message("crate not published to crates.io", None);
+        assert_eq!(
+            cause,
+            Some(BaselineErrorCause::NotPublished {
+                crate_name: "unknown".to_string(),
+                version: None,
+            })
+        );
     }
 
     #[test]
@@ -377,13 +431,13 @@ mod tests {
     #[test]
     fn test_classify_output_tool_error_exit_code() {
         let out = output(Some(2), "some error", "", None);
-        assert!(matches!(classify_output(&out), FailureKind::ToolError));
+        assert_eq!(classify_output(&out), FailureKind::ToolError);
     }
 
     #[test]
     fn test_classify_output_baseline_error() {
         let out = output(Some(2), "baseline not found", "unknown revision", None);
-        assert!(matches!(classify_output(&out), FailureKind::BaselineError));
+        assert_eq!(classify_output(&out), FailureKind::BaselineError);
     }
 
     // =========================================================================
@@ -400,10 +454,10 @@ mod tests {
         );
         let result = classify_output_detailed(&out, Some("my-crate"));
         assert_eq!(result.kind, FailureKind::BaselineError);
-        assert!(matches!(
-            result.baseline_cause,
-            Some(BaselineErrorCause::ShallowClone { .. })
-        ));
+        assert_baseline_cause_variant(
+            &result.baseline_cause,
+            BaselineErrorCause::ShallowClone { detail: None },
+        );
     }
 
     #[test]
@@ -452,10 +506,10 @@ mod tests {
         );
         let result = classify_output_detailed(&out, None);
         assert_eq!(result.kind, FailureKind::BaselineError);
-        assert!(matches!(
-            result.baseline_cause,
-            Some(BaselineErrorCause::RustdocGenerationFailed { .. })
-        ));
+        assert_baseline_cause_variant(
+            &result.baseline_cause,
+            BaselineErrorCause::RustdocGenerationFailed { detail: None },
+        );
     }
 
     #[test]
@@ -482,10 +536,13 @@ mod tests {
         let out = output(Some(2), "", "error: merge-base not found", None);
         let result = classify_output_detailed(&out, None);
         assert_eq!(result.kind, FailureKind::BaselineError);
-        assert!(matches!(
-            result.baseline_cause,
-            Some(BaselineErrorCause::MergeBaseNotFound { .. })
-        ));
+        assert_baseline_cause_variant(
+            &result.baseline_cause,
+            BaselineErrorCause::MergeBaseNotFound {
+                base: String::new(),
+                head: String::new(),
+            },
+        );
     }
 
     #[test]
@@ -498,10 +555,9 @@ mod tests {
         );
         let result = classify_output_detailed(&out, None);
         assert_eq!(result.kind, FailureKind::BaselineError);
-        assert!(matches!(
-            result.baseline_cause,
-            Some(BaselineErrorCause::Other { .. })
-        ));
+        assert_baseline_cause_variant(&result.baseline_cause, BaselineErrorCause::Other {
+            message: String::new(),
+        });
     }
 
     #[test]

@@ -39,11 +39,11 @@ impl WorkspaceProvider for CargoMetadataWorkspace {
                 continue;
             }
 
-            let manifest_path = PathBuf::from(pkg.manifest_path.as_std_path());
-            let package_root = manifest_path
-                .parent()
-                .ok_or_else(|| SemverguardError::Workspace("manifest has no parent dir".into()))?
-                .to_path_buf();
+        let manifest_path = PathBuf::from(pkg.manifest_path.as_std_path());
+        let package_root = manifest_path
+            .parent()
+            .expect("manifest path should have parent")
+            .to_path_buf();
 
             // In cargo metadata:
             // - publish = false -> publish = Some([]) (empty list)
@@ -219,11 +219,11 @@ edition = "2021"
 
         // lib-pkg: has [lib] target -> has_lib = true
         let lib_pkg = find_pkg("lib-pkg");
-        assert!(lib_pkg.has_lib, "lib-pkg should have a library target");
+        assert!(lib_pkg.has_lib);
 
         // bin-pkg: only [[bin]] target -> has_lib = false
         let bin_pkg = find_pkg("bin-pkg");
-        assert!(!bin_pkg.has_lib, "bin-pkg should not have a library target");
+        assert!(!bin_pkg.has_lib);
 
         // unpublishable-pkg: has [lib] target -> has_lib = true
         let unpub_pkg = find_pkg("unpublishable-pkg");
@@ -259,7 +259,7 @@ edition = "2021"
             // package_root should contain the package name in the path
             let root_str = pkg.package_root.to_string_lossy();
             let normalized_name = pkg.name.replace('-', "_");
-            let root_matches = root_str.contains(&pkg.name) || root_str.contains(&normalized_name);
+            let root_matches = root_str.contains(&pkg.name) | root_str.contains(&normalized_name);
             assert!(root_matches);
         }
     }

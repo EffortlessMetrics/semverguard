@@ -101,7 +101,13 @@ mod tests {
     fn test_from_io_error() {
         let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "access denied");
         let err: SemverguardError = io_err.into();
-        assert!(matches!(err, SemverguardError::Io(_)));
+        assert_eq!(
+            std::mem::discriminant(&err),
+            std::mem::discriminant(&SemverguardError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                ""
+            )))
+        );
         assert!(format!("{err}").contains("access denied"));
     }
 
@@ -110,7 +116,11 @@ mod tests {
         let invalid_bytes = vec![0x80, 0x81];
         let utf8_err = String::from_utf8(invalid_bytes).unwrap_err();
         let err: SemverguardError = utf8_err.into();
-        assert!(matches!(err, SemverguardError::Utf8(_)));
+        let sample_utf8_err = String::from_utf8(vec![0xff]).unwrap_err();
+        assert_eq!(
+            std::mem::discriminant(&err),
+            std::mem::discriminant(&SemverguardError::Utf8(sample_utf8_err))
+        );
     }
 
     // =========================================================================
@@ -140,10 +150,10 @@ mod tests {
     fn test_result_err() {
         let result: Result<i32> = Err(SemverguardError::InvalidConfig("bad config".to_string()));
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            SemverguardError::InvalidConfig(_)
-        ));
+        assert_eq!(
+            std::mem::discriminant(&result.unwrap_err()),
+            std::mem::discriminant(&SemverguardError::InvalidConfig("x".to_string()))
+        );
     }
 
     // =========================================================================

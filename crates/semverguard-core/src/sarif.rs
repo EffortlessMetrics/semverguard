@@ -116,7 +116,7 @@ pub struct SarifRuleConfiguration {
 }
 
 /// Severity level for a result.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SarifLevel {
     /// Indicates a serious problem.
@@ -542,10 +542,7 @@ pub fn receipt_to_sarif(receipt: &SensorReportV1) -> SarifLog {
         .collect();
 
     let invocation = SarifInvocation {
-        execution_successful: matches!(
-            receipt.verdict.status,
-            semverguard_types::VerdictStatus::Pass
-        ),
+        execution_successful: receipt.verdict.status == semverguard_types::VerdictStatus::Pass,
         start_time_utc: Some(receipt.run.started_at.clone()),
         end_time_utc: Some(receipt.run.finished_at.clone()),
         working_directory: Some(SarifArtifactLocation {
@@ -704,6 +701,7 @@ pub fn sarif_to_json(log: &SarifLog, pretty: bool) -> serde_json::Result<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use semverguard_types::{
         FailureKind, Finding, FindingLevel, FindingLocation, PackageStatus, SemverCheckOutput,
         Summary,
@@ -776,7 +774,7 @@ mod tests {
         assert_eq!(sarif.runs[0].results.len(), 1);
         let result = &sarif.runs[0].results[0];
         assert_eq!(result.rule_id, RULE_SEMVER_MAJOR_REQUIRED);
-        assert!(matches!(result.level, SarifLevel::Error));
+        assert_eq!(result.level, SarifLevel::Error);
     }
 
     #[test]
@@ -813,6 +811,40 @@ mod tests {
 
         // Pretty JSON should have newlines
         assert!(json.contains('\n'));
+    }
+
+    #[test]
+    fn test_finding_to_sarif_result_tool_runtime() {
+        let finding = Finding {
+            check_id: "tool.runtime".to_string(),
+            code: "error".to_string(),
+            level: FindingLevel::Error,
+            message: "tool error".to_string(),
+            location: None,
+            data: None,
+            fingerprint: None,
+            waived: None,
+        };
+        let result = finding_to_sarif_result(&finding);
+        assert_eq!(result.rule_id, RULE_TOOL_ERROR);
+        assert_eq!(result.level, SarifLevel::Error);
+    }
+
+    #[test]
+    fn test_finding_to_sarif_result_minor_bump() {
+        let finding = Finding {
+            check_id: "semver".to_string(),
+            code: "violation".to_string(),
+            level: FindingLevel::Error,
+            message: "minor bump required".to_string(),
+            location: None,
+            data: Some(json!({"required_bump":"minor"})),
+            fingerprint: None,
+            waived: None,
+        };
+        let result = finding_to_sarif_result(&finding);
+        assert_eq!(result.rule_id, RULE_SEMVER_MINOR_REQUIRED);
+        assert_eq!(result.level, SarifLevel::Warning);
     }
 
     #[test]
@@ -885,10 +917,7 @@ mod tests {
 
         for result in &sarif.runs[0].results {
             for loc in &result.locations {
-                assert!(
-                    loc.physical_location.region.is_none(),
-                    "HONESTY POLICY VIOLATION: region data should never be emitted"
-                );
+                assert!(loc.physical_location.region.is_none());
             }
         }
     }
@@ -901,13 +930,7 @@ mod tests {
 
         for result in &sarif.runs[0].results {
             for loc in &result.locations {
-                assert!(
-                    loc.physical_location
-                        .artifact_location
-                        .uri
-                        .contains("Cargo.toml"),
-                    "HONESTY POLICY: location should point to Cargo.toml manifest"
-                );
+                assert!(loc.physical_location.artifact_location.uri.contains("Cargo.toml"));
             }
         }
     }
@@ -944,49 +967,49 @@ mod tests {
         let rules = generate_rules();
 
         let breaking = rules.iter().find(|r| r.id == RULE_SEMVER_BREAKING).unwrap();
-        assert!(matches!(
+        assert_eq!(
             breaking.default_configuration.as_ref().unwrap().level,
             SarifLevel::Error
-        ));
+        );
 
         let major = rules
             .iter()
             .find(|r| r.id == RULE_SEMVER_MAJOR_REQUIRED)
             .unwrap();
-        assert!(matches!(
+        assert_eq!(
             major.default_configuration.as_ref().unwrap().level,
             SarifLevel::Error
-        ));
+        );
 
         let minor = rules
             .iter()
             .find(|r| r.id == RULE_SEMVER_MINOR_REQUIRED)
             .unwrap();
-        assert!(matches!(
+        assert_eq!(
             minor.default_configuration.as_ref().unwrap().level,
             SarifLevel::Warning
-        ));
+        );
 
         let patch = rules
             .iter()
             .find(|r| r.id == RULE_SEMVER_PATCH_REQUIRED)
             .unwrap();
-        assert!(matches!(
+        assert_eq!(
             patch.default_configuration.as_ref().unwrap().level,
             SarifLevel::Note
-        ));
+        );
 
         let tool_error = rules.iter().find(|r| r.id == RULE_TOOL_ERROR).unwrap();
-        assert!(matches!(
+        assert_eq!(
             tool_error.default_configuration.as_ref().unwrap().level,
             SarifLevel::Error
-        ));
+        );
 
         let baseline_error = rules.iter().find(|r| r.id == RULE_BASELINE_ERROR).unwrap();
-        assert!(matches!(
+        assert_eq!(
             baseline_error.default_configuration.as_ref().unwrap().level,
             SarifLevel::Warning
-        ));
+        );
     }
 
     #[test]
@@ -1022,7 +1045,7 @@ mod tests {
         let result = &sarif.runs[0].results[0];
 
         assert_eq!(result.rule_id, RULE_TOOL_ERROR);
-        assert!(matches!(result.level, SarifLevel::Error));
+        assert_eq!(result.level, SarifLevel::Error);
         assert!(result.message.text.contains("Tool error"));
     }
 
@@ -1060,7 +1083,7 @@ mod tests {
 
         assert_eq!(result.rule_id, RULE_BASELINE_ERROR);
         // Baseline errors are warnings, not errors
-        assert!(matches!(result.level, SarifLevel::Warning));
+        assert_eq!(result.level, SarifLevel::Warning);
         assert!(result.message.text.contains("Baseline error"));
     }
 
@@ -1369,7 +1392,7 @@ mod tests {
         let result = &sarif.runs[0].results[0];
 
         assert_eq!(result.rule_id, RULE_SEMVER_PATCH_REQUIRED);
-        assert!(matches!(result.level, SarifLevel::Note));
+        assert_eq!(result.level, SarifLevel::Note);
         assert!(result.message.text.contains("patch version bump"));
     }
 
@@ -1406,7 +1429,7 @@ mod tests {
         let result = &sarif.runs[0].results[0];
 
         assert_eq!(result.rule_id, RULE_SEMVER_BREAKING);
-        assert!(matches!(result.level, SarifLevel::Error));
+        assert_eq!(result.level, SarifLevel::Error);
     }
 
     #[test]
@@ -1477,7 +1500,7 @@ mod tests {
 
         let result = finding_to_sarif_result(&finding);
         assert_eq!(result.rule_id, RULE_SEMVER_PATCH_REQUIRED);
-        assert!(matches!(result.level, SarifLevel::Note));
+        assert_eq!(result.level, SarifLevel::Note);
         assert_eq!(
             result.locations[0].physical_location.artifact_location.uri,
             "raw/log.txt"
@@ -1520,7 +1543,7 @@ mod tests {
 
         let result = finding_to_sarif_result(&finding);
         assert_eq!(result.rule_id, RULE_SEMVER_BREAKING);
-        assert!(matches!(result.level, SarifLevel::Error));
+        assert_eq!(result.level, SarifLevel::Error);
     }
 
     #[test]
@@ -1541,7 +1564,7 @@ mod tests {
 
         let result = finding_to_sarif_result(&finding);
         assert_eq!(result.rule_id, RULE_SEMVER_BREAKING);
-        assert!(matches!(result.level, SarifLevel::Error));
+        assert_eq!(result.level, SarifLevel::Error);
     }
 
     #[test]

@@ -44,7 +44,7 @@ pub struct SemverCheckOutput {
 }
 
 /// Required version bump inferred from the tool output.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RequiredBump {
     /// Patch bump required.
@@ -95,17 +95,17 @@ mod tests {
         let major = RequiredBump::Major;
         let unknown = RequiredBump::Unknown;
 
-        assert!(matches!(patch, RequiredBump::Patch));
-        assert!(matches!(minor, RequiredBump::Minor));
-        assert!(matches!(major, RequiredBump::Major));
-        assert!(matches!(unknown, RequiredBump::Unknown));
+        assert_eq!(patch, RequiredBump::Patch);
+        assert_eq!(minor, RequiredBump::Minor);
+        assert_eq!(major, RequiredBump::Major);
+        assert_eq!(unknown, RequiredBump::Unknown);
     }
 
     #[test]
     fn test_required_bump_clone() {
         let bump = RequiredBump::Major;
         let cloned = bump;
-        assert!(matches!(cloned, RequiredBump::Major));
+        assert_eq!(cloned, RequiredBump::Major);
     }
 
     #[test]
@@ -113,8 +113,8 @@ mod tests {
         let bump = RequiredBump::Minor;
         let copied: RequiredBump = bump;
         // bump should still be valid since RequiredBump is Copy
-        assert!(matches!(bump, RequiredBump::Minor));
-        assert!(matches!(copied, RequiredBump::Minor));
+        assert_eq!(bump, RequiredBump::Minor);
+        assert_eq!(copied, RequiredBump::Minor);
     }
 
     // =========================================================================
@@ -124,77 +124,47 @@ mod tests {
     #[test]
     fn test_infer_major_bump() {
         let text = "A major version bump is required due to breaking changes";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Major)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Major));
 
         let text = "MAJOR BUMP REQUIRED";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Major)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Major));
 
         // All three words must be present
         let text = "major bump required";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Major)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Major));
     }
 
     #[test]
     fn test_infer_minor_bump() {
         let text = "A minor version bump is required for new features";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Minor)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Minor));
 
         let text = "MINOR BUMP REQUIRED";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Minor)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Minor));
 
         // All three words must be present
         let text = "minor bump required";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Minor)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Minor));
     }
 
     #[test]
     fn test_infer_patch_bump() {
         let text = "A patch version bump is required for bug fixes";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Patch)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Patch));
 
         let text = "PATCH BUMP REQUIRED";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Patch)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Patch));
 
         // All three words must be present
         let text = "patch bump required";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Patch)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Patch));
     }
 
     #[test]
     fn test_infer_unknown_bump() {
         // Generic "bump required" without specific level
         let text = "A version bump required for this change";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Unknown)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Unknown));
     }
 
     #[test]
@@ -215,32 +185,20 @@ mod tests {
     #[test]
     fn test_infer_case_insensitive() {
         let text = "MaJoR BuMp ReQuIrEd";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Major)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Major));
 
         let text = "minor BUMP required";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Minor)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Minor));
     }
 
     #[test]
     fn test_infer_words_in_different_positions() {
         // Words don't have to be adjacent
         let text = "Due to breaking API changes, a major version bump is required";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Major)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Major));
 
         let text = "bump to minor version is required";
-        assert!(matches!(
-            RequiredBump::infer(text),
-            Some(RequiredBump::Minor)
-        ));
+        assert_eq!(RequiredBump::infer(text), Some(RequiredBump::Minor));
     }
 
     // =========================================================================
@@ -358,7 +316,7 @@ mod tests {
         assert!(!output.success);
         assert!(output.stdout.is_empty());
         assert_eq!(output.stderr, "Major bump required");
-        assert!(matches!(output.required_bump, Some(RequiredBump::Major)));
+        assert_eq!(output.required_bump, Some(RequiredBump::Major));
     }
 
     #[test]
@@ -378,10 +336,7 @@ mod tests {
         assert_eq!(deserialized.success, original.success);
         assert_eq!(deserialized.stdout, original.stdout);
         assert_eq!(deserialized.stderr, original.stderr);
-        assert!(matches!(
-            deserialized.required_bump,
-            Some(RequiredBump::Minor)
-        ));
+        assert_eq!(deserialized.required_bump, Some(RequiredBump::Minor));
     }
 
     #[test]
@@ -416,13 +371,7 @@ mod tests {
         ] {
             let json = serde_json::to_string(&bump).unwrap();
             let deserialized: RequiredBump = serde_json::from_str(&json).unwrap();
-            assert!(matches!(
-                (bump, deserialized),
-                (RequiredBump::Patch, RequiredBump::Patch)
-                    | (RequiredBump::Minor, RequiredBump::Minor)
-                    | (RequiredBump::Major, RequiredBump::Major)
-                    | (RequiredBump::Unknown, RequiredBump::Unknown)
-            ));
+            assert_eq!(bump, deserialized);
         }
     }
 

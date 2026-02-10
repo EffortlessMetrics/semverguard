@@ -109,7 +109,7 @@ impl RunMode {
 
     /// Returns true if this is cockpit mode.
     pub fn is_cockpit(&self) -> bool {
-        matches!(self, RunMode::Cockpit)
+        *self == RunMode::Cockpit
     }
 
     /// Returns true if baseline errors should be treated as warnings.
@@ -117,7 +117,8 @@ impl RunMode {
     /// In Pr and Cockpit modes, baseline errors are warnings (don't fail CI).
     /// In Release mode, baseline errors are failures.
     pub fn baseline_errors_are_warnings(&self) -> bool {
-        matches!(self.resolve(), RunMode::Pr | RunMode::Cockpit)
+        let resolved = self.resolve();
+        resolved == RunMode::Pr || resolved == RunMode::Cockpit
     }
 
     /// Returns the suggested default scope mode for this run mode.
@@ -178,7 +179,7 @@ impl Default for SemverguardConfig {
 ///
 /// - `crates-io`: compare against a published version on crates.io (or registries).
 /// - `git`: compare against the workspace state at a git revision.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BaselineKind {
     /// Compare against a released version.
@@ -340,7 +341,7 @@ impl Default for ScopeConfig {
 }
 
 /// Package selection mode.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ScopeMode {
     /// Check all eligible workspace packages.
@@ -505,37 +506,37 @@ pub enum Verbosity {
 impl Verbosity {
     /// Returns true if this verbosity level shows passed packages.
     pub fn shows_passed(&self) -> bool {
-        matches!(self, Verbosity::Verbose | Verbosity::Debug)
+        *self >= Verbosity::Verbose
     }
 
     /// Returns true if this verbosity level shows skipped packages.
     pub fn shows_skipped(&self) -> bool {
-        !matches!(self, Verbosity::Quiet)
+        *self != Verbosity::Quiet
     }
 
     /// Returns true if this verbosity level shows timing information.
     pub fn shows_timing(&self) -> bool {
-        matches!(self, Verbosity::Verbose | Verbosity::Debug)
+        *self >= Verbosity::Verbose
     }
 
     /// Returns true if this verbosity level shows commands executed.
     pub fn shows_commands(&self) -> bool {
-        matches!(self, Verbosity::Verbose | Verbosity::Debug)
+        *self >= Verbosity::Verbose
     }
 
     /// Returns true if this verbosity level shows full engine output.
     pub fn shows_full_output(&self) -> bool {
-        matches!(self, Verbosity::Debug)
+        *self == Verbosity::Debug
     }
 
     /// Returns true if this verbosity level shows effective config.
     pub fn shows_config(&self) -> bool {
-        matches!(self, Verbosity::Debug)
+        *self == Verbosity::Debug
     }
 
     /// Returns true if this is quiet mode (suppress most output).
     pub fn is_quiet(&self) -> bool {
-        matches!(self, Verbosity::Quiet)
+        *self == Verbosity::Quiet
     }
 }
 
@@ -618,10 +619,10 @@ mod tests {
     #[test]
     fn test_semverguard_config_default() {
         let config = SemverguardConfig::default();
-        assert!(matches!(config.mode, RunMode::Auto));
-        assert!(matches!(config.baseline.kind, BaselineKind::CratesIo));
-        assert!(matches!(config.scope.mode, ScopeMode::Workspace));
-        assert!(matches!(config.output.format, OutputFormat::Text));
+        assert_eq!(config.mode, RunMode::Auto);
+        assert_eq!(config.baseline.kind, BaselineKind::CratesIo);
+        assert_eq!(config.scope.mode, ScopeMode::Workspace);
+        assert_eq!(config.output.format, OutputFormat::Text);
     }
 
     // =========================================================================
@@ -631,7 +632,7 @@ mod tests {
     #[test]
     fn test_run_mode_default() {
         let mode = RunMode::default();
-        assert!(matches!(mode, RunMode::Auto));
+        assert_eq!(mode, RunMode::Auto);
     }
 
     #[test]
@@ -671,18 +672,9 @@ mod tests {
 
     #[test]
     fn test_run_mode_suggested_scope_mode() {
-        assert!(matches!(
-            RunMode::Pr.suggested_scope_mode(),
-            ScopeMode::Changed
-        ));
-        assert!(matches!(
-            RunMode::Release.suggested_scope_mode(),
-            ScopeMode::Workspace
-        ));
-        assert!(matches!(
-            RunMode::Cockpit.suggested_scope_mode(),
-            ScopeMode::Changed
-        ));
+        assert_eq!(RunMode::Pr.suggested_scope_mode(), ScopeMode::Changed);
+        assert_eq!(RunMode::Release.suggested_scope_mode(), ScopeMode::Workspace);
+        assert_eq!(RunMode::Cockpit.suggested_scope_mode(), ScopeMode::Changed);
     }
 
     #[test]
@@ -711,13 +703,13 @@ mod tests {
     #[test]
     fn test_baseline_kind_default() {
         let kind = BaselineKind::default();
-        assert!(matches!(kind, BaselineKind::CratesIo));
+        assert_eq!(kind, BaselineKind::CratesIo);
     }
 
     #[test]
     fn test_baseline_config_default() {
         let config = BaselineConfig::default();
-        assert!(matches!(config.kind, BaselineKind::CratesIo));
+        assert_eq!(config.kind, BaselineKind::CratesIo);
         assert!(config.version.is_none());
         assert!(config.rev.is_none());
         assert!(config.root.is_none());
@@ -727,7 +719,7 @@ mod tests {
     #[test]
     fn test_scope_config_default() {
         let config = ScopeConfig::default();
-        assert!(matches!(config.mode, ScopeMode::Workspace));
+        assert_eq!(config.mode, ScopeMode::Workspace);
         assert!(config.include.is_empty());
         assert!(config.exclude.is_empty());
         assert!(config.skip_publish_false);
@@ -737,7 +729,7 @@ mod tests {
     #[test]
     fn test_scope_mode_default() {
         let mode = ScopeMode::default();
-        assert!(matches!(mode, ScopeMode::Workspace));
+        assert_eq!(mode, ScopeMode::Workspace);
     }
 
     #[test]
@@ -763,13 +755,13 @@ mod tests {
     #[test]
     fn test_output_format_default() {
         let format = OutputFormat::default();
-        assert!(matches!(format, OutputFormat::Text));
+        assert_eq!(format, OutputFormat::Text);
     }
 
     #[test]
     fn test_output_config_default() {
         let config = OutputConfig::default();
-        assert!(matches!(config.format, OutputFormat::Text));
+        assert_eq!(config.format, OutputFormat::Text);
         assert!(config.json_path.is_none());
         assert!(config.pretty_json);
         assert_eq!(config.artifacts_dir, PathBuf::from("artifacts/semverguard"));
@@ -786,8 +778,8 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: SemverguardConfig = serde_json::from_str(&json).unwrap();
 
-        assert!(matches!(deserialized.baseline.kind, BaselineKind::CratesIo));
-        assert!(matches!(deserialized.scope.mode, ScopeMode::Workspace));
+        assert_eq!(deserialized.baseline.kind, BaselineKind::CratesIo);
+        assert_eq!(deserialized.scope.mode, ScopeMode::Workspace);
     }
 
     #[test]
@@ -795,11 +787,7 @@ mod tests {
         for kind in [BaselineKind::CratesIo, BaselineKind::Git] {
             let json = serde_json::to_string(&kind).unwrap();
             let deserialized: BaselineKind = serde_json::from_str(&json).unwrap();
-            assert!(matches!(
-                (kind, deserialized),
-                (BaselineKind::CratesIo, BaselineKind::CratesIo)
-                    | (BaselineKind::Git, BaselineKind::Git)
-            ));
+            assert_eq!(kind, deserialized);
         }
     }
 
@@ -816,7 +804,7 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: BaselineConfig = serde_json::from_str(&json).unwrap();
 
-        assert!(matches!(deserialized.kind, BaselineKind::Git));
+        assert_eq!(deserialized.kind, BaselineKind::Git);
         assert_eq!(deserialized.version, Some("1.0.0".to_string()));
         assert_eq!(deserialized.rev, Some("origin/main".to_string()));
         assert_eq!(deserialized.root, Some(PathBuf::from("/workspace")));
@@ -831,11 +819,7 @@ mod tests {
         for mode in [ScopeMode::Workspace, ScopeMode::Changed] {
             let json = serde_json::to_string(&mode).unwrap();
             let deserialized: ScopeMode = serde_json::from_str(&json).unwrap();
-            assert!(matches!(
-                (mode, deserialized),
-                (ScopeMode::Workspace, ScopeMode::Workspace)
-                    | (ScopeMode::Changed, ScopeMode::Changed)
-            ));
+            assert_eq!(mode, deserialized);
         }
     }
 
@@ -852,7 +836,7 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: ScopeConfig = serde_json::from_str(&json).unwrap();
 
-        assert!(matches!(deserialized.mode, ScopeMode::Changed));
+        assert_eq!(deserialized.mode, ScopeMode::Changed);
         assert_eq!(deserialized.include, vec!["pkg-*", "core"]);
         assert_eq!(deserialized.exclude, vec!["test-*"]);
         assert!(!deserialized.skip_publish_false);
@@ -911,13 +895,7 @@ mod tests {
         ] {
             let json = serde_json::to_string(&format).unwrap();
             let deserialized: OutputFormat = serde_json::from_str(&json).unwrap();
-            assert!(matches!(
-                (format, deserialized),
-                (OutputFormat::Text, OutputFormat::Text)
-                    | (OutputFormat::Json, OutputFormat::Json)
-                    | (OutputFormat::Both, OutputFormat::Both)
-                    | (OutputFormat::Receipt, OutputFormat::Receipt)
-            ));
+            assert_eq!(format, deserialized);
         }
     }
 
@@ -935,7 +913,7 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: OutputConfig = serde_json::from_str(&json).unwrap();
 
-        assert!(matches!(deserialized.format, OutputFormat::Both));
+        assert_eq!(deserialized.format, OutputFormat::Both);
         assert_eq!(
             deserialized.json_path,
             Some(PathBuf::from("/output/report.json"))
@@ -957,9 +935,9 @@ mod tests {
         let toml_str = "";
         let config: SemverguardConfig = toml::from_str(toml_str).unwrap();
         // Should use all defaults
-        assert!(matches!(config.mode, RunMode::Auto));
-        assert!(matches!(config.baseline.kind, BaselineKind::CratesIo));
-        assert!(matches!(config.scope.mode, ScopeMode::Workspace));
+        assert_eq!(config.mode, RunMode::Auto);
+        assert_eq!(config.baseline.kind, BaselineKind::CratesIo);
+        assert_eq!(config.scope.mode, ScopeMode::Workspace);
     }
 
     #[test]
@@ -1002,10 +980,10 @@ pretty_json = false
         let config: SemverguardConfig = toml::from_str(toml_str).unwrap();
 
         // Mode
-        assert!(matches!(config.mode, RunMode::Release));
+        assert_eq!(config.mode, RunMode::Release);
 
         // Baseline
-        assert!(matches!(config.baseline.kind, BaselineKind::Git));
+        assert_eq!(config.baseline.kind, BaselineKind::Git);
         assert_eq!(config.baseline.version, Some("2.0.0".to_string()));
         assert_eq!(config.baseline.rev, Some("v2.0.0".to_string()));
         assert_eq!(config.baseline.root, Some(PathBuf::from("/some/path")));
@@ -1015,7 +993,7 @@ pretty_json = false
         );
 
         // Scope
-        assert!(matches!(config.scope.mode, ScopeMode::Changed));
+        assert_eq!(config.scope.mode, ScopeMode::Changed);
         assert_eq!(config.scope.include, vec!["mylib-*"]);
         assert_eq!(config.scope.exclude, vec!["mylib-internal"]);
         assert!(!config.scope.skip_publish_false);
@@ -1038,7 +1016,7 @@ pretty_json = false
         assert!(config.engine.fail_fast);
 
         // Output
-        assert!(matches!(config.output.format, OutputFormat::Both));
+        assert_eq!(config.output.format, OutputFormat::Both);
         assert_eq!(config.output.json_path, Some(PathBuf::from("report.json")));
         assert!(!config.output.pretty_json);
         assert_eq!(
@@ -1052,56 +1030,56 @@ pretty_json = false
     fn test_baseline_kind_toml_kebab_case() {
         let toml_str = r#"kind = "crates-io""#;
         let config: BaselineConfig = toml::from_str(toml_str).unwrap();
-        assert!(matches!(config.kind, BaselineKind::CratesIo));
+        assert_eq!(config.kind, BaselineKind::CratesIo);
 
         let toml_str = r#"kind = "git""#;
         let config: BaselineConfig = toml::from_str(toml_str).unwrap();
-        assert!(matches!(config.kind, BaselineKind::Git));
+        assert_eq!(config.kind, BaselineKind::Git);
     }
 
     #[test]
     fn test_scope_mode_toml_kebab_case() {
         let toml_str = r#"mode = "workspace""#;
         let config: ScopeConfig = toml::from_str(toml_str).unwrap();
-        assert!(matches!(config.mode, ScopeMode::Workspace));
+        assert_eq!(config.mode, ScopeMode::Workspace);
 
         let toml_str = r#"mode = "changed""#;
         let config: ScopeConfig = toml::from_str(toml_str).unwrap();
-        assert!(matches!(config.mode, ScopeMode::Changed));
+        assert_eq!(config.mode, ScopeMode::Changed);
     }
 
     #[test]
     fn test_run_mode_toml_kebab_case() {
         let toml_str = r#"mode = "auto""#;
         let config: SemverguardConfig = toml::from_str(toml_str).unwrap();
-        assert!(matches!(config.mode, RunMode::Auto));
+        assert_eq!(config.mode, RunMode::Auto);
 
         let toml_str = r#"mode = "pr""#;
         let config: SemverguardConfig = toml::from_str(toml_str).unwrap();
-        assert!(matches!(config.mode, RunMode::Pr));
+        assert_eq!(config.mode, RunMode::Pr);
 
         let toml_str = r#"mode = "release""#;
         let config: SemverguardConfig = toml::from_str(toml_str).unwrap();
-        assert!(matches!(config.mode, RunMode::Release));
+        assert_eq!(config.mode, RunMode::Release);
     }
 
     #[test]
     fn test_output_format_toml_kebab_case() {
         let toml_str = r#"format = "text""#;
         let config: OutputConfig = toml::from_str(toml_str).unwrap();
-        assert!(matches!(config.format, OutputFormat::Text));
+        assert_eq!(config.format, OutputFormat::Text);
 
         let toml_str = r#"format = "json""#;
         let config: OutputConfig = toml::from_str(toml_str).unwrap();
-        assert!(matches!(config.format, OutputFormat::Json));
+        assert_eq!(config.format, OutputFormat::Json);
 
         let toml_str = r#"format = "both""#;
         let config: OutputConfig = toml::from_str(toml_str).unwrap();
-        assert!(matches!(config.format, OutputFormat::Both));
+        assert_eq!(config.format, OutputFormat::Both);
 
         let toml_str = r#"format = "receipt""#;
         let config: OutputConfig = toml::from_str(toml_str).unwrap();
-        assert!(matches!(config.format, OutputFormat::Receipt));
+        assert_eq!(config.format, OutputFormat::Receipt);
     }
 
     #[test]
@@ -1116,12 +1094,12 @@ exclude = ["test-*"]
         let config: SemverguardConfig = toml::from_str(toml_str).unwrap();
 
         // Baseline: defaults except rev
-        assert!(matches!(config.baseline.kind, BaselineKind::CratesIo));
+        assert_eq!(config.baseline.kind, BaselineKind::CratesIo);
         assert!(config.baseline.version.is_none());
         assert_eq!(config.baseline.rev, Some("origin/main".to_string()));
 
         // Scope: defaults except exclude
-        assert!(matches!(config.scope.mode, ScopeMode::Workspace));
+        assert_eq!(config.scope.mode, ScopeMode::Workspace);
         assert!(config.scope.include.is_empty());
         assert_eq!(config.scope.exclude, vec!["test-*"]);
         assert!(config.scope.skip_publish_false);
@@ -1134,7 +1112,7 @@ exclude = ["test-*"]
         assert!(config.engine.cargo_bin.is_none());
 
         // Output: all defaults
-        assert!(matches!(config.output.format, OutputFormat::Text));
+        assert_eq!(config.output.format, OutputFormat::Text);
         assert_eq!(
             config.output.artifacts_dir,
             PathBuf::from("artifacts/semverguard")
@@ -1235,84 +1213,84 @@ reason = "Known baseline issue"
 
     #[test]
     fn test_run_mode_detect_from_env_release_github_tag() {
-        assert!(matches!(
+        assert_eq!(
             detect_with_env(&[("GITHUB_REF", "refs/tags/v1.2.3")]),
             RunMode::Release
-        ));
+        );
     }
 
     #[test]
     fn test_run_mode_detect_from_env_release_gitlab_tag() {
-        assert!(matches!(
+        assert_eq!(
             detect_with_env(&[("CI_COMMIT_TAG", "v1.0.0")]),
             RunMode::Release
-        ));
+        );
     }
 
     #[test]
     fn test_run_mode_detect_from_env_pr_github_event() {
-        assert!(matches!(
+        assert_eq!(
             detect_with_env(&[("GITHUB_EVENT_NAME", "pull_request")]),
             RunMode::Pr
-        ));
+        );
     }
 
     #[test]
     fn test_run_mode_detect_from_env_pr_gitlab() {
-        assert!(matches!(
+        assert_eq!(
             detect_with_env(&[("CI_PIPELINE_SOURCE", "merge_request_event")]),
             RunMode::Pr
-        ));
+        );
     }
 
     #[test]
     fn test_run_mode_detect_from_env_pr_azure_circle() {
-        assert!(matches!(
+        assert_eq!(
             detect_with_env(&[("SYSTEM_PULLREQUEST_PULLREQUESTID", "123")]),
             RunMode::Pr
-        ));
-        assert!(matches!(
+        );
+        assert_eq!(
             detect_with_env(&[("CIRCLE_PULL_REQUEST", "url")]),
             RunMode::Pr
-        ));
+        );
     }
 
     #[test]
     fn test_run_mode_detect_from_env_default_pr() {
-        assert!(matches!(detect_with_env(&[]), RunMode::Pr));
+        assert_eq!(detect_with_env(&[]), RunMode::Pr);
     }
 
     #[test]
     fn test_run_mode_detect_from_env_non_tag_ref_defaults_to_pr() {
-        assert!(matches!(
+        assert_eq!(
             detect_with_env(&[("GITHUB_REF", "refs/heads/main")]),
             RunMode::Pr
-        ));
+        );
     }
 
     #[test]
     fn test_run_mode_detect_from_env_non_pr_event_defaults_to_pr() {
-        assert!(matches!(
+        assert_eq!(
             detect_with_env(&[("GITHUB_EVENT_NAME", "push")]),
             RunMode::Pr
-        ));
+        );
     }
 
     #[test]
     fn test_run_mode_detect_from_env_non_merge_request_defaults_to_pr() {
-        assert!(matches!(
+        assert_eq!(
             detect_with_env(&[("CI_PIPELINE_SOURCE", "schedule")]),
             RunMode::Pr
-        ));
+        );
     }
 
     #[test]
     fn test_run_mode_detect_from_env_smoke() {
         let detected = RunMode::detect_from_env();
-        assert!(matches!(detected, RunMode::Pr | RunMode::Release));
+        assert!([RunMode::Pr, RunMode::Release].contains(&detected));
 
         let resolved = RunMode::Auto.resolve();
-        assert!(matches!(resolved, RunMode::Pr | RunMode::Release));
+        assert!([RunMode::Pr, RunMode::Release].contains(&resolved));
     }
 
     #[test]

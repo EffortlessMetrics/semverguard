@@ -1,7 +1,7 @@
 [package]
 name = "bin-pkg"
 version = "2.3.4"
-edition = "2021"
+edition = "2024"
 
 # publish is unset, so it's publishable to any registry
 

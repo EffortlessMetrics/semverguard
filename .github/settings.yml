@@ -1,0 +1,12 @@
+# Configuration for the Settings app (probot)
+# https://github.com/apps/settings
+
+repository:
+  # Short, specific, human-readable. One sentence.
+  description: "Orchestrates cargo-semver-checks across workspaces with filtering, scoping, and receipts."
+
+  # Canonical project URL
+  homepage: "https://github.com/EffortlessMetrics/semverguard"
+
+  # 3-8 tags, lowercase, consistent taxonomy
+  topics: "semver, rust, cargo, ci, monorepo, semver-checks, versioning"

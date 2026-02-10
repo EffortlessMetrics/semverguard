@@ -40,7 +40,7 @@ pub fn build_capability_context(
         Some("baseline resolution failed".to_string())
     };
 
-    let git_skipped = !matches!(config.baseline.kind, BaselineKind::Git);
+    let git_skipped = config.baseline.kind != BaselineKind::Git;
 
     let mut ctx = CapabilityContext::new()
         .with_git_available(git_available)
@@ -125,6 +125,17 @@ mod tests {
         let caps = ctx.build();
         assert_eq!(caps.git.status, CapabilityStatus::Unavailable);
         assert_eq!(caps.git.reason, Some("git_unavailable".to_string()));
+    }
+
+    #[test]
+    fn test_crates_io_baseline_detail_includes_version() {
+        let mut config = SemverguardConfig::default();
+        config.baseline.kind = BaselineKind::CratesIo;
+        config.baseline.version = Some("1.2.3".to_string());
+
+        let ctx = build_capability_context(&config, &empty_report(), true, false, None);
+        let caps = ctx.build();
+        assert_eq!(caps.baseline.detail, Some("crates-io:1.2.3".to_string()));
     }
 
     #[test]

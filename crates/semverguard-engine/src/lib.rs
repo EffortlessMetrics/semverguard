@@ -101,8 +101,8 @@ impl SemverEngine for CargoSemverChecksEngine {
             SemverguardError::Engine(format!("failed to run cargo semver-checks: {e}"))
         })?;
 
-        let stdout = String::from_utf8(output.stdout)?;
-        let stderr = String::from_utf8(output.stderr)?;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         let exit_code = output.status.code();
         let success = output.status.success();
@@ -648,35 +648,35 @@ mod tests {
     fn test_required_bump_infer_major() {
         let text = "Error: major version bump required due to breaking changes";
         let bump = RequiredBump::infer(text);
-        assert!(matches!(bump, Some(RequiredBump::Major)));
+        assert_eq!(bump, Some(RequiredBump::Major));
     }
 
     #[test]
     fn test_required_bump_infer_major_case_insensitive() {
         let text = "MAJOR VERSION BUMP REQUIRED";
         let bump = RequiredBump::infer(text);
-        assert!(matches!(bump, Some(RequiredBump::Major)));
+        assert_eq!(bump, Some(RequiredBump::Major));
     }
 
     #[test]
     fn test_required_bump_infer_minor() {
         let text = "Warning: minor version bump required for new features";
         let bump = RequiredBump::infer(text);
-        assert!(matches!(bump, Some(RequiredBump::Minor)));
+        assert_eq!(bump, Some(RequiredBump::Minor));
     }
 
     #[test]
     fn test_required_bump_infer_patch() {
         let text = "Note: patch version bump required for bug fixes";
         let bump = RequiredBump::infer(text);
-        assert!(matches!(bump, Some(RequiredBump::Patch)));
+        assert_eq!(bump, Some(RequiredBump::Patch));
     }
 
     #[test]
     fn test_required_bump_infer_unknown_bump_required() {
         let text = "Some kind of bump required for changes";
         let bump = RequiredBump::infer(text);
-        assert!(matches!(bump, Some(RequiredBump::Unknown)));
+        assert_eq!(bump, Some(RequiredBump::Unknown));
     }
 
     #[test]
@@ -699,7 +699,7 @@ mod tests {
         // since it's checked first in the implementation
         let text = "major version bump required, minor changes also present";
         let bump = RequiredBump::infer(text);
-        assert!(matches!(bump, Some(RequiredBump::Major)));
+        assert_eq!(bump, Some(RequiredBump::Major));
     }
 
     // =========================================================================
@@ -1093,7 +1093,7 @@ mod tests {
 
         assert!(!output.success);
         assert_eq!(output.exit_code, Some(1));
-        assert!(matches!(output.required_bump, Some(RequiredBump::Major)));
+        assert_eq!(output.required_bump, Some(RequiredBump::Major));
     }
 
     #[test]
@@ -1107,7 +1107,7 @@ mod tests {
         };
 
         assert!(!output.success);
-        assert!(matches!(output.required_bump, Some(RequiredBump::Minor)));
+        assert_eq!(output.required_bump, Some(RequiredBump::Minor));
     }
 
     #[test]
@@ -1156,7 +1156,7 @@ Found 3 breaking changes:
 Major version bump required.
 "#;
         let bump = RequiredBump::infer(text);
-        assert!(matches!(bump, Some(RequiredBump::Major)));
+        assert_eq!(bump, Some(RequiredBump::Major));
     }
 
     #[test]
@@ -1164,7 +1164,7 @@ Major version bump required.
         // Test when the key words are scattered in the text
         let text = "The changes are major in nature and a version bump is required";
         let bump = RequiredBump::infer(text);
-        assert!(matches!(bump, Some(RequiredBump::Major)));
+        assert_eq!(bump, Some(RequiredBump::Major));
     }
 
     #[test]
@@ -1172,14 +1172,14 @@ Major version bump required.
         // "bump required" phrase without specifying level triggers Unknown
         let text = "A version bump required for these changes";
         let bump = RequiredBump::infer(text);
-        assert!(matches!(bump, Some(RequiredBump::Unknown)));
+        assert_eq!(bump, Some(RequiredBump::Unknown));
     }
 
     #[test]
     fn test_required_bump_infer_stderr_style_message() {
         let text = "error: Breaking API changes detected. A major bump is required to proceed.";
         let bump = RequiredBump::infer(text);
-        assert!(matches!(bump, Some(RequiredBump::Major)));
+        assert_eq!(bump, Some(RequiredBump::Major));
     }
 
     // =========================================================================
@@ -1192,7 +1192,7 @@ Major version bump required.
         let (_cargo, args) = CargoSemverChecksEngine::build_command(&req);
 
         // Minimum args: semver-checks, check-release, --manifest-path, <path>
-        assert!(args.len() >= 4, "Should have at least 4 arguments");
+        assert!(args.len() >= 4);
     }
 
     #[test]
@@ -1344,7 +1344,7 @@ Major version bump required.
         assert!(output.success);
         assert!(output.stdout.contains("Major version bump required."));
         assert!(output.stderr.contains("stderr line"));
-        assert!(matches!(output.required_bump, Some(RequiredBump::Major)));
+        assert_eq!(output.required_bump, Some(RequiredBump::Major));
     }
 
     #[test]

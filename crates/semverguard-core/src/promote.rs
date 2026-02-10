@@ -174,4 +174,51 @@ mode = "workspace"
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
+
+    #[test]
+    fn test_promote_read_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = promote_git_baseline(dir.path(), "def456", false).unwrap_err();
+        assert!(err.to_string().contains("failed to read"));
+    }
+
+    #[test]
+    fn test_promote_parse_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("semverguard.toml");
+        fs::write(&config_path, "not = [valid").unwrap();
+        let err = promote_git_baseline(&config_path, "def456", false).unwrap_err();
+        assert!(err.to_string().contains("failed to parse"));
+    }
+
+    #[test]
+    fn test_promote_baseline_not_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("semverguard.toml");
+        fs::write(&config_path, "baseline = \"oops\"").unwrap();
+        let err = promote_git_baseline(&config_path, "def456", false).unwrap_err();
+        assert!(err.to_string().contains("baseline is not a table"));
+    }
+
+    #[test]
+    fn test_promote_write_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("semverguard.toml");
+        fs::write(
+            &config_path,
+            r#"
+[baseline]
+kind = "git"
+rev = "abc123"
+"#,
+        )
+        .unwrap();
+
+        let mut perms = fs::metadata(&config_path).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&config_path, perms).unwrap();
+
+        let err = promote_git_baseline(&config_path, "def456", true).unwrap_err();
+        assert!(err.to_string().contains("failed to write"));
+    }
 }

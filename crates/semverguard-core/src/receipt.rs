@@ -499,7 +499,7 @@ fn build_run_info_from_now(
     let now = OffsetDateTime::now_utc();
     let ts = now
         .format(&Rfc3339)
-        .unwrap_or_else(|_| now.unix_timestamp().to_string());
+        .expect("failed to format receipt timestamp");
     semverguard_types::RunInfo {
         started_at: ts.clone(),
         finished_at: ts,
@@ -1032,8 +1032,9 @@ fn build_summary_data(report: &RunReport, baseline: &BaselineConfig) -> SummaryD
 mod tests {
     use super::*;
     use semverguard_types::{
-        BaselineConfig, BaselineErrorCause, BaselineKind, CapabilityStatus, FailureKind, Finding,
-        FindingLevel, PackageStatus, RequiredBump, SemverCheckOutput, Summary, WaiverEntry,
+        ArtifactIndex, BaselineConfig, BaselineErrorCause, BaselineKind, CapabilityStatus,
+        FailureKind, Finding, FindingLevel, PackageStatus, RawLogRef, RequiredBump,
+        SemverCheckOutput, Summary, WaiverEntry,
     };
     use std::fs;
     use tempfile::tempdir;
@@ -1205,10 +1206,7 @@ mod tests {
         for window in receipt.findings.windows(2) {
             let a = &window[0];
             let b = &window[1];
-            assert!(
-                finding_sort_key(a) <= finding_sort_key(b),
-                "Findings should be sorted by severity, then package, then fingerprint"
-            );
+            assert!(finding_sort_key(a) <= finding_sort_key(b));
         }
     }
 
@@ -1460,11 +1458,7 @@ mod tests {
         ];
         let re = regex_lite::Regex::new(r"^[a-z0-9_]+(\.[a-z0-9_]+)*$").unwrap();
         for token in &tokens {
-            assert!(
-                re.is_match(token),
-                "Token '{}' does not match expected format",
-                token
-            );
+            assert!(re.is_match(token));
         }
     }
 
@@ -1485,11 +1479,7 @@ mod tests {
         ];
         let re = regex_lite::Regex::new(r"^[a-z][a-z0-9_]*$").unwrap();
         for token in &tokens {
-            assert!(
-                re.is_match(token),
-                "Reason token '{}' does not match expected format",
-                token
-            );
+            assert!(re.is_match(token));
         }
     }
 
@@ -1531,22 +1521,14 @@ mod tests {
         let result = normalize_receipt_path(workspace, Path::new("/other/dir/Cargo.toml"));
         // On the same filesystem, strip_prefix fails, path contains ..
         // The implementation falls back to filename
-        assert!(
-            !result.contains(".."),
-            "Result should not contain '..' path traversal: {}",
-            result
-        );
+        assert!(!result.contains(".."));
     }
 
     #[test]
     fn test_normalize_receipt_path_forward_slashes() {
         let workspace = Path::new("/workspace");
         let result = normalize_receipt_path(workspace, Path::new("/workspace/foo/bar/Cargo.toml"));
-        assert!(
-            !result.contains('\\'),
-            "Normalized path should not contain backslashes: {}",
-            result
-        );
+        assert!(!result.contains('\\'));
     }
 
     #[test]
@@ -1554,11 +1536,7 @@ mod tests {
         let workspace = Path::new("/workspace");
         let result =
             normalize_receipt_path(workspace, Path::new("/workspace/crates/lib/Cargo.toml"));
-        assert!(
-            !result.starts_with('/'),
-            "Normalized path should be relative, not absolute: {}",
-            result
-        );
+        assert!(!result.starts_with('/'));
     }
 
     #[test]
@@ -1566,16 +1544,8 @@ mod tests {
         let workspace = Path::new("/workspace");
         let result =
             normalize_receipt_path(workspace, Path::new("artifacts/semverguard/report.json"));
-        assert!(
-            !result.contains('\\'),
-            "Relative path should use forward slashes: {}",
-            result
-        );
-        assert!(
-            !result.contains(".."),
-            "Relative path should not contain path traversal: {}",
-            result
-        );
+        assert!(!result.contains('\\'));
+        assert!(!result.contains(".."));
     }
 
     #[test]
@@ -1598,10 +1568,7 @@ mod tests {
         let data = receipt.data.as_ref().expect("data should be present");
         assert!(data.findings_total.is_none());
         assert!(data.findings_emitted.is_none());
-        assert!(
-            !receipt.verdict.reasons.contains(&"truncated".to_string()),
-            "Verdict should not contain 'truncated' reason when under limit"
-        );
+        assert!(!receipt.verdict.reasons.contains(&"truncated".to_string()));
     }
 
     #[test]
@@ -1869,6 +1836,41 @@ mod tests {
 
         let message = build_failure_message(&pkg, FailureKind::SemverViolation);
         assert!(message.contains("failed semantic versioning checks"));
+    }
+
+    #[test]
+    fn test_build_failure_message_tool_error_fallback() {
+        let pkg = PackageReport {
+            name: "alpha".to_string(),
+            version: "1.2.3".to_string(),
+            manifest_path: PathBuf::from("/workspace/alpha/Cargo.toml"),
+            status: PackageStatus::Failed,
+            skip_reason: None,
+            duration_ms: 1,
+            command: vec![],
+            engine: Some(SemverCheckOutput {
+                exit_code: Some(1),
+                success: false,
+                stdout: String::new(),
+                stderr: String::new(),
+                required_bump: None,
+            }),
+            inferred_required_bump: None,
+            failure_kind: Some(FailureKind::ToolError),
+            baseline_error: None,
+        };
+
+        let message = build_failure_message(&pkg, FailureKind::ToolError);
+        assert!(message.contains("tool error"));
+    }
+
+    #[test]
+    fn test_duration_ms_from_strings_invalid_and_negative() {
+        assert!(duration_ms_from_strings("bad", "2024-01-15T10:00:00Z").is_none());
+
+        let start = "2024-01-15T10:01:00Z";
+        let end = "2024-01-15T10:00:00Z";
+        assert!(duration_ms_from_strings(start, end).is_none());
     }
 
     #[test]
@@ -2174,6 +2176,56 @@ mod tests {
     }
 
     #[test]
+    fn test_build_findings_raw_log_fallback_uses_stdout() {
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![PackageReport {
+                name: "alpha".to_string(),
+                version: "1.2.3".to_string(),
+                manifest_path: PathBuf::from("/workspace/alpha/Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: None,
+                duration_ms: 1,
+                command: vec![],
+                engine: None,
+                inferred_required_bump: None,
+                failure_kind: Some(FailureKind::ToolError),
+                baseline_error: None,
+            }],
+            summary: Summary {
+                total: 1,
+                passed: 0,
+                failed: 1,
+                skipped: 0,
+            },
+        };
+
+        let artifacts = ArtifactIndex {
+            report_json: "report.json".to_string(),
+            comment_md: "comment.md".to_string(),
+            sarif_json: None,
+            raw_logs: vec![RawLogRef {
+                package: "alpha".to_string(),
+                version: "1.2.3".to_string(),
+                stdout: Some("raw/alpha.stdout.log".to_string()),
+                stderr: None,
+            }],
+        };
+
+        let findings = build_findings(&report, &artifacts, report.workspace_root.as_path());
+        assert_eq!(findings.len(), 1);
+        let raw_log = findings[0]
+            .location
+            .as_ref()
+            .and_then(|loc| loc.raw_log.as_ref())
+            .unwrap();
+        assert_eq!(raw_log, "raw/alpha.stdout.log");
+    }
+
+    #[test]
     fn test_write_receipt_bundle_compact_json() {
         let dir = tempdir().unwrap();
         let report = sample_report();
@@ -2191,6 +2243,28 @@ mod tests {
 
         let contents = fs::read_to_string(dir.path().join("report.json")).unwrap();
         assert!(contents.contains("\"schema\""));
+    }
+
+    #[test]
+    fn test_write_receipt_bundle_pretty_json_and_sarif() {
+        let dir = tempdir().unwrap();
+        let report = sample_report();
+        let artifacts =
+            build_artifact_index(Path::new("workspace"), dir.path(), Some(&report), true);
+        let receipt = build_receipt(
+            Some(&report),
+            &[],
+            &artifacts,
+            &BaselineConfig::default(),
+            report.workspace_root.as_path(),
+        );
+
+        write_receipt_bundle(dir.path(), &receipt, Some(&report), true, true).unwrap();
+
+        assert!(dir.path().join("report.json").exists());
+        assert!(dir.path().join("comment.md").exists());
+        assert!(dir.path().join("sarif.json").exists());
+        assert!(dir.path().join("raw").exists());
     }
 
     #[test]

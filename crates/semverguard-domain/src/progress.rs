@@ -110,13 +110,26 @@ mod tests {
             })
         };
 
+        recorder.on_progress(ProgressEvent::Finished {
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+        });
         recorder.on_progress(ProgressEvent::TotalPackages { total: 3 });
 
         let events = events.lock().unwrap();
-        assert_eq!(events.len(), 1);
-        assert!(matches!(
-            events[0],
-            ProgressEvent::TotalPackages { total: 3 }
-        ));
+        assert_eq!(events.len(), 2);
+        let mut total = 0;
+        for event in events.iter() {
+            let value = if let ProgressEvent::TotalPackages { total } = event {
+                *total
+            } else {
+                0
+            };
+            if value != 0 {
+                total = value;
+            }
+        }
+        assert_eq!(total, 3);
     }
 }

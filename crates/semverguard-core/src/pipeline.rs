@@ -52,7 +52,7 @@ pub fn run_with_adapters(
     git: Option<&dyn GitProvider>,
     engine: &dyn SemverEngine,
 ) -> Result<PipelineResult> {
-    let receipt_requested = matches!(options.config.output.format, OutputFormat::Receipt);
+    let receipt_requested = options.config.output.format == OutputFormat::Receipt;
     let artifacts_root = resolve_artifacts_dir(
         &options.workspace_root,
         &options.config.output.artifacts_dir,
@@ -61,7 +61,7 @@ pub fn run_with_adapters(
     crate::config::ensure_workspace_root(&options.workspace_root)?;
 
     // Probe git availability
-    let git_available = git.is_some() && matches!(options.config.baseline.kind, BaselineKind::Git);
+    let git_available = git.is_some() && options.config.baseline.kind == BaselineKind::Git;
 
     // Probe shallow clone if git adapter supports it
     #[cfg(feature = "default-adapters")]
@@ -100,7 +100,7 @@ pub fn run_with_adapters(
                 options.sarif,
             );
 
-            let git_skipped = !matches!(options.config.baseline.kind, BaselineKind::Git);
+            let git_skipped = options.config.baseline.kind != BaselineKind::Git;
 
             let capability_ctx = CapabilityContext::new()
                 .with_git_available(git_available)
@@ -143,10 +143,10 @@ pub fn run_with_adapters(
         semverguard_version: tool_version.to_string(),
         started_at: started
             .format(&Rfc3339)
-            .unwrap_or_else(|_| started.unix_timestamp().to_string()),
+            .expect("failed to format start timestamp"),
         finished_at: finished
             .format(&Rfc3339)
-            .unwrap_or_else(|_| finished.unix_timestamp().to_string()),
+            .expect("failed to format finish timestamp"),
         workspace_root: artifacts.workspace_root,
         packages: artifacts.packages,
         summary: artifacts.summary,
@@ -207,7 +207,7 @@ pub fn run(options: &PipelineOptions) -> Result<PipelineResult> {
     let git_available = git.is_available(&options.workspace_root);
     let git_version = git.version(&options.workspace_root);
 
-    let receipt_requested = matches!(options.config.output.format, OutputFormat::Receipt);
+    let receipt_requested = options.config.output.format == OutputFormat::Receipt;
     let artifacts_root = resolve_artifacts_dir(
         &options.workspace_root,
         &options.config.output.artifacts_dir,
@@ -242,7 +242,7 @@ pub fn run(options: &PipelineOptions) -> Result<PipelineResult> {
                 options.sarif,
             );
 
-            let git_skipped = !matches!(options.config.baseline.kind, BaselineKind::Git);
+            let git_skipped = options.config.baseline.kind != BaselineKind::Git;
 
             let capability_ctx = CapabilityContext::new()
                 .with_git_available(git_available)
@@ -286,10 +286,10 @@ pub fn run(options: &PipelineOptions) -> Result<PipelineResult> {
         semverguard_version: tool_version.to_string(),
         started_at: started
             .format(&Rfc3339)
-            .unwrap_or_else(|_| started.unix_timestamp().to_string()),
+            .expect("failed to format start timestamp"),
         finished_at: finished
             .format(&Rfc3339)
-            .unwrap_or_else(|_| finished.unix_timestamp().to_string()),
+            .expect("failed to format finish timestamp"),
         workspace_root: artifacts.workspace_root,
         packages: artifacts.packages,
         summary: artifacts.summary,
@@ -377,8 +377,9 @@ mod tests {
     use semver::Version;
     use semverguard_domain::{Result as DomainResult, SemverguardError};
     use semverguard_types::{
-        OutputFormat, RequiredBump, RunMode, ScopeMode, SemverCheckOutput, SemverCheckRequest,
-        SemverguardConfig, VerdictStatus, WorkspaceMetadata, WorkspacePackage,
+        BaselineKind, CapabilityStatus, OutputFormat, RequiredBump, RunMode, ScopeMode,
+        SemverCheckOutput, SemverCheckRequest, SemverguardConfig, VerdictStatus, WorkspaceMetadata,
+        WorkspacePackage,
     };
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
@@ -403,6 +404,28 @@ mod tests {
         fn load(&self, _workspace_root: &Path) -> DomainResult<WorkspaceMetadata> {
             Err(SemverguardError::Workspace(self.message.clone()))
         }
+    }
+
+    struct NoopGitProvider;
+
+    impl GitProvider for NoopGitProvider {
+        fn changed_paths(
+            &self,
+            _workspace_root: &Path,
+            _base: &str,
+            _head: &str,
+        ) -> DomainResult<Vec<PathBuf>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn test_noop_git_provider_changed_paths_returns_empty() {
+        let git = NoopGitProvider;
+        let paths = git
+            .changed_paths(Path::new("/workspace"), "base", "head")
+            .unwrap();
+        assert!(paths.is_empty());
     }
 
     enum EngineOutcome {
@@ -516,6 +539,72 @@ mod tests {
     }
 
     #[test]
+    fn test_helpers_create_workspace_and_fake_cargo() {
+        let dir = tempdir().unwrap();
+        write_minimal_workspace(dir.path()).unwrap();
+        let fake_cargo = write_fake_cargo(dir.path()).unwrap();
+        assert!(dir.path().join("Cargo.toml").exists());
+        assert!(fake_cargo.exists());
+    }
+
+    #[test]
+    fn test_run_with_adapters_invalid_workspace_root_errors() {
+        let dir = tempdir().unwrap();
+        let missing_root = dir.path().join("missing");
+        let metadata = basic_metadata(dir.path());
+        let workspace = MockWorkspaceProvider { metadata };
+        let engine = MockEngine {
+            outcome: EngineOutcome::Success,
+        };
+        let mut config = base_config();
+        config.output.format = OutputFormat::Text;
+
+        let options = PipelineOptions {
+            workspace_root: missing_root,
+            config,
+            sarif: false,
+            tool_version: None,
+            progress: None,
+        };
+
+        let err = run_with_adapters(&options, &workspace, None, &engine)
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("workspace root does not exist"));
+    }
+
+    #[test]
+    fn test_run_with_adapters_git_available_sets_capabilities() {
+        let dir = tempdir().unwrap();
+        let metadata = basic_metadata(dir.path());
+        let workspace = MockWorkspaceProvider { metadata };
+        let engine = MockEngine {
+            outcome: EngineOutcome::Success,
+        };
+        let git = NoopGitProvider;
+        let mut config = base_config();
+        config.output.format = OutputFormat::Receipt;
+        config.baseline.kind = BaselineKind::Git;
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: false,
+            tool_version: Some("0.0.0-test".to_string()),
+            progress: None,
+        };
+
+        let result = run_with_adapters(&options, &workspace, Some(&git), &engine).unwrap();
+        let capabilities = result
+            .receipt
+            .run
+            .capabilities
+            .as_ref()
+            .expect("capabilities");
+        assert_eq!(capabilities.git.status, CapabilityStatus::Available);
+    }
+
+    #[test]
     fn test_run_with_adapters_non_receipt_uses_report_exit_code() {
         let dir = tempdir().unwrap();
         let metadata = basic_metadata(dir.path());
@@ -598,23 +687,22 @@ mod tests {
         assert_eq!(result.receipt.verdict.status, VerdictStatus::Pass);
 
         let events = events.lock().unwrap();
-        let has_total = events.iter().any(|event| {
-            matches!(
-                event,
-                semverguard_domain::ProgressEvent::TotalPackages { total: 1 }
-            )
-        });
+        let mut has_total = false;
+        let mut has_finished = false;
+        for event in events.iter() {
+            if let semverguard_domain::ProgressEvent::TotalPackages { total } = event {
+                has_total = *total == 1;
+            }
+            if let semverguard_domain::ProgressEvent::Finished {
+                passed,
+                failed,
+                skipped,
+            } = event
+            {
+                has_finished = *passed == 1 && *failed == 0 && *skipped == 0;
+            }
+        }
         assert!(has_total);
-        let has_finished = events.iter().any(|event| {
-            matches!(
-                event,
-                semverguard_domain::ProgressEvent::Finished {
-                    passed: 1,
-                    failed: 0,
-                    skipped: 0,
-                }
-            )
-        });
         assert!(has_finished);
     }
 
@@ -708,6 +796,35 @@ mod tests {
         assert!(artifacts_dir.join("comment.md").exists());
         assert!(artifacts_dir.join("sarif.json").exists());
         assert!(artifacts_dir.join("raw").exists());
+    }
+
+    #[test]
+    fn test_write_pipeline_receipt_errors_on_invalid_artifacts_dir() {
+        let dir = tempdir().unwrap();
+        let metadata = basic_metadata(dir.path());
+        let workspace = MockWorkspaceProvider { metadata };
+        let engine = MockEngine {
+            outcome: EngineOutcome::Success,
+        };
+        let mut config = base_config();
+        config.output.format = OutputFormat::Receipt;
+        config.output.artifacts_dir = PathBuf::from("artifacts");
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: false,
+            tool_version: Some("0.0.0-test".to_string()),
+            progress: None,
+        };
+
+        let result = run_with_adapters(&options, &workspace, None, &engine).unwrap();
+        let artifacts_root =
+            crate::receipt::resolve_artifacts_dir(&options.workspace_root, &options.config.output.artifacts_dir);
+        fs::write(&artifacts_root, "not a dir").unwrap();
+
+        let err = write_pipeline_receipt(&result, &options).unwrap_err();
+        assert!(err.to_string().contains("failed to write receipt bundle"));
     }
 
     #[cfg(feature = "default-adapters")]
@@ -817,5 +934,27 @@ mod tests {
 
         let result = run(&options);
         assert!(result.is_err());
+    }
+
+    #[cfg(feature = "default-adapters")]
+    #[test]
+    fn test_run_default_adapters_invalid_workspace_root_errors() {
+        let dir = tempdir().unwrap();
+        let missing_root = dir.path().join("missing");
+        let mut config = base_config();
+        config.output.format = OutputFormat::Text;
+
+        let options = PipelineOptions {
+            workspace_root: missing_root,
+            config,
+            sarif: false,
+            tool_version: None,
+            progress: None,
+        };
+
+        let err = run(&options)
+            .err()
+            .expect("expected error for missing workspace root");
+        assert!(err.to_string().contains("workspace root does not exist"));
     }
 }

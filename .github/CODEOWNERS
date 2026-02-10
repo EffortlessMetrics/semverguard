@@ -1,0 +1,2 @@
+# Protect repo settings from accidental changes
+/.github/settings.yml @EffortlessSteven

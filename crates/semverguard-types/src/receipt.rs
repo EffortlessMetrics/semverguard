@@ -342,7 +342,7 @@ mod tests {
         let json = serde_json::to_string(&receipt).unwrap();
         let parsed: SensorReportV1 = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.schema, "sensor.report.v1");
-        assert!(matches!(parsed.verdict.status, VerdictStatus::Pass));
+        assert_eq!(parsed.verdict.status, VerdictStatus::Pass);
         assert!(parsed.data.is_some());
     }
 
@@ -428,9 +428,6 @@ mod tests {
         };
 
         let value = serde_json::to_value(receipt).unwrap();
-        assert!(
-            validator.is_valid(&value),
-            "receipt should validate against schema"
-        );
+        assert!(validator.is_valid(&value));
     }
 }

@@ -162,7 +162,7 @@ fn test_cockpit_zero_config_defaults() {
     }
 
     assert!(
-        matches!(cfg.output.format, OutputFormat::Receipt),
+        cfg.output.format == OutputFormat::Receipt,
         "Cockpit mode should force receipt format"
     );
     assert_eq!(

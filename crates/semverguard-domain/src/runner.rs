@@ -161,7 +161,7 @@ impl<'a> SemverguardRunner<'a> {
                     )
                 })?;
 
-                if !matches!(config.baseline.kind, semverguard_types::BaselineKind::Git) {
+                if config.baseline.kind != semverguard_types::BaselineKind::Git {
                     return Err(SemverguardError::InvalidConfig(
                         "scope.mode=changed requires baseline.kind = \"git\"".into(),
                     ));
@@ -361,7 +361,7 @@ impl<'a> SemverguardRunner<'a> {
                     )
                 })?;
 
-                if !matches!(config.baseline.kind, semverguard_types::BaselineKind::Git) {
+                if config.baseline.kind != semverguard_types::BaselineKind::Git {
                     return Err(SemverguardError::InvalidConfig(
                         "scope.mode=changed requires baseline.kind = \"git\"".into(),
                     ));
@@ -900,7 +900,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, SemverguardError::InvalidConfig(_)));
+        assert_eq!(
+            std::mem::discriminant(&err),
+            std::mem::discriminant(&SemverguardError::InvalidConfig(String::new()))
+        );
         assert!(format!("{err}").contains("baseline.rev"));
     }
 
@@ -928,7 +931,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, SemverguardError::InvalidConfig(_)));
+        assert_eq!(
+            std::mem::discriminant(&err),
+            std::mem::discriminant(&SemverguardError::InvalidConfig(String::new()))
+        );
         assert!(format!("{err}").contains("git"));
     }
 
@@ -956,7 +962,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, SemverguardError::InvalidConfig(_)));
+        assert_eq!(
+            std::mem::discriminant(&err),
+            std::mem::discriminant(&SemverguardError::InvalidConfig(String::new()))
+        );
         assert!(format!("{err}").contains("GitProvider"));
     }
 
@@ -1090,7 +1099,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, SemverguardError::InvalidConfig(_)));
+        assert_eq!(
+            std::mem::discriminant(&err),
+            std::mem::discriminant(&SemverguardError::InvalidConfig(String::new()))
+        );
         assert!(format!("{err}").contains("glob"));
     }
 
@@ -1470,7 +1482,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, SemverguardError::Workspace(_)));
+        assert_eq!(
+            std::mem::discriminant(&err),
+            std::mem::discriminant(&SemverguardError::Workspace(String::new()))
+        );
         assert!(format!("{err}").contains("failed to parse Cargo.toml"));
     }
 
@@ -1504,7 +1519,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, SemverguardError::Git(_)));
+        assert_eq!(
+            std::mem::discriminant(&err),
+            std::mem::discriminant(&SemverguardError::Git(String::new()))
+        );
         assert!(format!("{err}").contains("git rev-parse failed"));
     }
 
@@ -1565,10 +1583,7 @@ mod tests {
         assert!(report.skip_reason.is_none());
         assert!(report.engine.is_some());
         assert!(!report.engine.as_ref().unwrap().success);
-        assert!(matches!(
-            report.inferred_required_bump,
-            Some(RequiredBump::Major)
-        ));
+        assert_eq!(report.inferred_required_bump, Some(RequiredBump::Major));
     }
 
     // =========================================================================
@@ -1637,7 +1652,10 @@ mod tests {
         let result = build_globset(&patterns);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, SemverguardError::InvalidConfig(_)));
+        assert_eq!(
+            std::mem::discriminant(&err),
+            std::mem::discriminant(&SemverguardError::InvalidConfig(String::new()))
+        );
         assert!(format!("{err}").contains("bad glob"));
     }
 
@@ -1646,6 +1664,16 @@ mod tests {
         let patterns = vec!["valid-*".to_string(), "[invalid".to_string()];
         let result = build_globset(&patterns);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_globset_regex_build_error() {
+        let mut pattern = "a".repeat(16 * 1024 * 1024);
+        pattern.push('?');
+        let result = build_globset(&[pattern]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(format!("{err}").contains("globset build error"));
     }
 
     #[test]
@@ -2321,11 +2349,9 @@ mod tests {
         assert_eq!(failed.status, PackageStatus::Failed);
         assert!(failed.skip_reason.is_some());
         let reason = failed.skip_reason.as_ref().unwrap();
-        assert!(
-            reason.contains("engine") || reason.contains("cargo-semver-checks"),
-            "Error reason should mention engine or cargo-semver-checks: {}",
-            reason
-        );
+        let has_engine = reason.contains("engine");
+        let has_cargo = reason.contains("cargo-semver-checks");
+        assert!(has_engine | has_cargo);
     }
 
     #[test]
@@ -2387,17 +2413,9 @@ mod tests {
 
         // Error should not be a raw stack trace but an actionable message
         let reason = failed.skip_reason.as_ref().unwrap();
-        assert!(
-            !reason.contains("at src/") && !reason.contains("panicked"),
-            "Error should be user-friendly, not a stack trace: {}",
-            reason
-        );
+        assert!(!reason.contains("at src/") && !reason.contains("panicked"));
         // Should contain some indication of what went wrong
-        assert!(
-            reason.len() > 10,
-            "Error message should be descriptive: {}",
-            reason
-        );
+        assert!(reason.len() > 10);
     }
 
     #[test]
@@ -2482,9 +2500,13 @@ mod tests {
 
         let events = events.lock().unwrap();
         assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, ProgressEvent::Finished { .. }))
+            events.iter().any(|e| {
+                if let ProgressEvent::Finished { .. } = e {
+                    true
+                } else {
+                    false
+                }
+            })
         );
     }
 
@@ -2512,9 +2534,13 @@ mod tests {
 
         let events = events.lock().unwrap();
         assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, ProgressEvent::PackageStarted { .. }))
+            events.iter().any(|e| {
+                if let ProgressEvent::PackageStarted { .. } = e {
+                    true
+                } else {
+                    false
+                }
+            })
         );
     }
 
@@ -2612,6 +2638,39 @@ mod tests {
     }
 
     #[test]
+    fn test_list_packages_workspace_provider_error() {
+        let workspace = FailingWorkspaceProvider {
+            error_msg: "load failed".to_string(),
+        };
+        let engine = MockSemverEngine::new(vec![]);
+        let runner = SemverguardRunner::new(&workspace, None, &engine);
+        let config = default_config();
+
+        let err = runner
+            .list_packages(Path::new("/workspace"), &config)
+            .unwrap_err();
+        assert!(err.to_string().contains("workspace error"));
+    }
+
+    #[test]
+    fn test_list_packages_invalid_exclude_glob_returns_error() {
+        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let metadata = make_workspace_metadata(packages);
+        let workspace = MockWorkspaceProvider::new(metadata);
+        let engine = MockSemverEngine::new(vec![]);
+        let runner = SemverguardRunner::new(&workspace, None, &engine);
+
+        let mut config = default_config();
+        config.scope.include = vec!["pkg-*".to_string()];
+        config.scope.exclude = vec!["[invalid".to_string()];
+
+        let err = runner
+            .list_packages(Path::new("/workspace"), &config)
+            .unwrap_err();
+        assert!(err.to_string().contains("bad glob"));
+    }
+
+    #[test]
     fn test_list_packages_changed_mode_scopes() {
         let packages = vec![
             make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true),
@@ -2635,6 +2694,28 @@ mod tests {
         assert_eq!(result.would_check[0].name, "pkg-a");
         assert_eq!(result.would_skip.len(), 1);
         assert!(result.would_skip[0].reason.contains("unchanged"));
+    }
+
+    #[test]
+    fn test_list_packages_changed_mode_git_error_propagates() {
+        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let metadata = make_workspace_metadata(packages);
+        let workspace = MockWorkspaceProvider::new(metadata);
+        let git = FailingGitProvider {
+            error_msg: "git error".to_string(),
+        };
+        let engine = MockSemverEngine::new(vec![]);
+        let runner = SemverguardRunner::new(&workspace, Some(&git), &engine);
+
+        let mut config = default_config();
+        config.scope.mode = ScopeMode::Changed;
+        config.baseline.kind = BaselineKind::Git;
+        config.baseline.rev = Some("origin/main".to_string());
+
+        let err = runner
+            .list_packages(Path::new("/workspace"), &config)
+            .unwrap_err();
+        assert!(err.to_string().contains("git error"));
     }
 
     #[test]
@@ -2786,11 +2867,27 @@ mod tests {
     }
 
     #[test]
+    fn test_run_invalid_exclude_glob_returns_error() {
+        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let metadata = make_workspace_metadata(packages);
+        let workspace = MockWorkspaceProvider::new(metadata);
+        let engine = MockSemverEngine::new(vec![]);
+        let runner = SemverguardRunner::new(&workspace, None, &engine);
+
+        let mut config = default_config();
+        config.scope.include = vec!["pkg-*".to_string()];
+        config.scope.exclude = vec!["[invalid".to_string()];
+
+        let err = runner.run(Path::new("/workspace"), &config).unwrap_err();
+        assert!(err.to_string().contains("bad glob"));
+    }
+
+    #[test]
     fn test_normalize_rel_ignores_root_components() {
         let normalized = normalize_rel(Path::new("/workspace/pkg-a"));
-        assert!(
-            normalized.ends_with("workspace\\pkg-a") || normalized.ends_with("workspace/pkg-a")
-        );
+        let matches_windows = normalized.ends_with("workspace\\pkg-a");
+        let matches_unix = normalized.ends_with("workspace/pkg-a");
+        assert!(matches_windows | matches_unix);
     }
 
     #[test]

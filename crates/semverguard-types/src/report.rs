@@ -194,31 +194,36 @@ impl std::fmt::Display for BaselineErrorCause {
                 write!(f, "crate '{}' does not exist in baseline", crate_name)
             }
             Self::ShallowClone { detail } => {
-                write!(f, "shallow clone cannot resolve baseline")?;
+                let mut msg = "shallow clone cannot resolve baseline".to_string();
                 if let Some(d) = detail {
-                    write!(f, ": {}", d)?;
+                    msg.push_str(": ");
+                    msg.push_str(d);
                 }
-                Ok(())
+                f.write_str(&msg)
             }
             Self::MergeBaseNotFound { base, head } => {
                 write!(f, "no merge base found between '{}' and '{}'", base, head)
             }
             Self::RustdocGenerationFailed { detail } => {
-                write!(f, "failed to generate baseline rustdoc")?;
+                let mut msg = "failed to generate baseline rustdoc".to_string();
                 if let Some(d) = detail {
-                    write!(f, ": {}", d)?;
+                    msg.push_str(": ");
+                    msg.push_str(d);
                 }
-                Ok(())
+                f.write_str(&msg)
             }
             Self::NotPublished {
                 crate_name,
                 version,
             } => {
-                write!(f, "crate '{}' not published to crates.io", crate_name)?;
+                let mut msg =
+                    format!("crate '{}' not published to crates.io", crate_name);
                 if let Some(v) = version {
-                    write!(f, " (version {})", v)?;
+                    msg.push_str(" (version ");
+                    msg.push_str(v);
+                    msg.push(')');
                 }
-                Ok(())
+                f.write_str(&msg)
             }
             Self::Other { message } => write!(f, "{}", message),
         }
@@ -231,17 +236,24 @@ impl BaselineErrorCause {
     /// For example, a new crate that doesn't exist in the baseline is expected
     /// behavior, not a real failure.
     pub fn is_expected(&self) -> bool {
-        matches!(self, Self::CrateAbsentFromBaseline { .. })
+        std::mem::discriminant(self)
+            == std::mem::discriminant(&Self::CrateAbsentFromBaseline {
+                crate_name: String::new(),
+            })
     }
 
     /// Returns true if this error is likely recoverable with CI configuration changes.
     ///
     /// For example, shallow clone issues can be fixed by fetching more history.
     pub fn is_ci_recoverable(&self) -> bool {
-        matches!(
-            self,
-            Self::ShallowClone { .. } | Self::MergeBaseNotFound { .. }
-        )
+        let discriminant = std::mem::discriminant(self);
+        discriminant
+            == std::mem::discriminant(&Self::ShallowClone { detail: None })
+            || discriminant
+                == std::mem::discriminant(&Self::MergeBaseNotFound {
+                    base: String::new(),
+                    head: String::new(),
+                })
     }
 }
 
@@ -506,10 +518,7 @@ mod tests {
         };
 
         assert_eq!(report.status, PackageStatus::Failed);
-        assert!(matches!(
-            report.inferred_required_bump,
-            Some(RequiredBump::Major)
-        ));
+        assert_eq!(report.inferred_required_bump, Some(RequiredBump::Major));
     }
 
     #[test]

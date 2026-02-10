@@ -381,6 +381,24 @@ mod tests {
     }
 
     #[test]
+    fn test_skipped_package_default_reason() {
+        let mut pkg = make_package("lib-a", "1.0.0", PackageStatus::Skipped);
+        pkg.skip_reason = None;
+        let packages = vec![pkg];
+        let mut receipt = minimal_receipt();
+        receipt.data = Some(SemverguardData {
+            report: minimal_report(packages),
+            findings_total: None,
+            findings_emitted: None,
+            summary: None,
+        });
+
+        let comment = render_comment(&receipt);
+
+        assert!(comment.contains("lib-a 1.0.0 (skipped)"));
+    }
+
+    #[test]
     fn test_mixed_status_packages() {
         let packages = vec![
             make_package("lib-a", "1.0.0", PackageStatus::Passed),
@@ -428,6 +446,33 @@ mod tests {
         let comment = render_comment(&receipt);
 
         assert!(comment.contains("(log: logs/lib-a.stderr.log)"));
+    }
+
+    #[test]
+    fn test_failed_package_unknown_bump_and_stdout_log() {
+        let mut pkg = make_package("lib-a", "1.0.0", PackageStatus::Failed);
+        pkg.inferred_required_bump = None;
+        pkg.failure_kind = Some(FailureKind::SemverViolation);
+        let packages = vec![pkg];
+        let mut receipt = minimal_receipt();
+        receipt.verdict.status = VerdictStatus::Fail;
+        receipt.data = Some(SemverguardData {
+            report: minimal_report(packages),
+            findings_total: None,
+            findings_emitted: None,
+            summary: None,
+        });
+        receipt.artifacts.raw_logs = vec![RawLogRef {
+            package: "lib-a".to_string(),
+            version: "1.0.0".to_string(),
+            stdout: Some("logs/lib-a.stdout.log".to_string()),
+            stderr: None,
+        }];
+
+        let comment = render_comment(&receipt);
+
+        assert!(comment.contains("required bump: unknown"));
+        assert!(comment.contains("(log: logs/lib-a.stdout.log)"));
     }
 
     #[test]
@@ -535,14 +580,8 @@ mod tests {
         let beta_pos = comment.find("beta").unwrap();
         let zebra_pos = comment.find("zebra").unwrap();
 
-        assert!(
-            alpha_pos < beta_pos,
-            "alpha should come before beta in sorted output"
-        );
-        assert!(
-            beta_pos < zebra_pos,
-            "beta should come before zebra in sorted output"
-        );
+        assert!(alpha_pos < beta_pos);
+        assert!(beta_pos < zebra_pos);
     }
 
     #[test]

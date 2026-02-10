@@ -80,17 +80,8 @@ impl MockWorkspaceProvider {
     /// Assert that `load` was called exactly once with the expected root.
     pub fn assert_called_once_with(&self, expected_root: &Path) {
         let calls = self.calls.lock().unwrap();
-        assert_eq!(
-            calls.len(),
-            1,
-            "Expected exactly 1 call, got {}",
-            calls.len()
-        );
-        assert_eq!(
-            calls[0].workspace_root, expected_root,
-            "Expected workspace_root {:?}, got {:?}",
-            expected_root, calls[0].workspace_root
-        );
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].workspace_root, expected_root);
     }
 
     /// Set a new result to return on the next call.
@@ -193,27 +184,10 @@ impl MockGitProvider {
         expected_head: &str,
     ) {
         let calls = self.calls.lock().unwrap();
-        assert_eq!(
-            calls.len(),
-            1,
-            "Expected exactly 1 call, got {}",
-            calls.len()
-        );
-        assert_eq!(
-            calls[0].workspace_root, expected_root,
-            "Expected workspace_root {:?}, got {:?}",
-            expected_root, calls[0].workspace_root
-        );
-        assert_eq!(
-            calls[0].base, expected_base,
-            "Expected base {:?}, got {:?}",
-            expected_base, calls[0].base
-        );
-        assert_eq!(
-            calls[0].head, expected_head,
-            "Expected head {:?}, got {:?}",
-            expected_head, calls[0].head
-        );
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].workspace_root, expected_root);
+        assert_eq!(calls[0].base, expected_base);
+        assert_eq!(calls[0].head, expected_head);
     }
 
     /// Set a new result to return on the next call.
@@ -375,11 +349,7 @@ impl MockSemverEngine {
     /// Assert that `check` was called exactly N times.
     pub fn assert_call_count(&self, expected: usize) {
         let actual = self.call_count();
-        assert_eq!(
-            actual, expected,
-            "Expected {} calls, got {}",
-            expected, actual
-        );
+        assert_eq!(actual, expected);
     }
 
     /// Assert that `check` was not called.
@@ -501,6 +471,14 @@ mod tests {
     }
 
     #[test]
+    fn test_mock_workspace_provider_no_result_configured() {
+        let provider = MockWorkspaceProvider::empty("/workspace");
+        let _ = provider.load(Path::new("/workspace")).unwrap();
+        let err = provider.load(Path::new("/workspace")).unwrap_err();
+        assert!(err.to_string().contains("no result configured"));
+    }
+
+    #[test]
     fn test_mock_git_provider_returns_changed_paths() {
         let paths = vec![
             PathBuf::from("crates/foo/src/lib.rs"),
@@ -536,6 +514,18 @@ mod tests {
         let calls = provider.calls();
         assert_eq!(calls[0].base, "base1");
         assert_eq!(calls[1].base, "base2");
+    }
+
+    #[test]
+    fn test_mock_git_provider_no_result_configured() {
+        let provider = MockGitProvider::no_changes();
+        let _ = provider
+            .changed_paths(Path::new("/ws"), "origin/main", "HEAD")
+            .unwrap();
+        let err = provider
+            .changed_paths(Path::new("/ws"), "origin/main", "HEAD")
+            .unwrap_err();
+        assert!(err.to_string().contains("no result configured"));
     }
 
     #[test]

@@ -290,7 +290,7 @@ fn run_with_cli(cli: Cli) -> Result<i32> {
             let cfg = config::load_config(&cfg_path)?;
             // Nothing else to override (yet) besides ensuring workspace_root exists.
             config::ensure_workspace_root(&args.workspace_root)?;
-            print_config(&cfg)?;
+            print_config(&cfg);
             Ok(0)
         }
         Commands::ValidateConfig(args) => {
@@ -313,10 +313,9 @@ fn run_with_cli(cli: Cli) -> Result<i32> {
     }
 }
 
-fn print_config(cfg: &SemverguardConfig) -> Result<()> {
-    let out = toml::to_string_pretty(cfg).context("failed to serialize config to TOML")?;
+fn print_config(cfg: &SemverguardConfig) {
+    let out = toml::to_string_pretty(cfg).expect("failed to serialize config to TOML");
     print!("{out}");
-    Ok(())
 }
 
 fn apply_cli_overrides(cfg: &mut SemverguardConfig, args: &CheckArgs) {
@@ -364,7 +363,7 @@ fn apply_cli_overrides(cfg: &mut SemverguardConfig, args: &CheckArgs) {
         cfg.output.json_path = Some(json_path.clone());
         // If the user asked for JSON explicitly, default to both unless they also set --format.
         if args.format.is_none()
-            && matches!(cfg.output.format, OutputFormat::Text)
+            && cfg.output.format == OutputFormat::Text
             && !cfg.mode.is_cockpit()
         {
             cfg.output.format = OutputFormat::Both;
@@ -373,7 +372,7 @@ fn apply_cli_overrides(cfg: &mut SemverguardConfig, args: &CheckArgs) {
 
     // Handle --sarif shorthand flag (takes precedence over --json if both specified)
     if let Some(sarif_path) = &args.sarif {
-        if matches!(cfg.output.format, OutputFormat::Receipt) {
+        if cfg.output.format == OutputFormat::Receipt {
             // Receipt mode can still emit SARIF, but keep receipt as primary format.
         } else {
             cfg.output.format = OutputFormat::Sarif;
@@ -399,7 +398,7 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
     };
     apply_cli_overrides(&mut cfg, args);
 
-    let receipt_requested = matches!(cfg.output.format, OutputFormat::Receipt);
+    let receipt_requested = cfg.output.format == OutputFormat::Receipt;
     let sarif_requested = receipt_requested && args.sarif.is_some();
     let artifacts_root = resolve_artifacts_dir(&args.workspace_root, &cfg.output.artifacts_dir);
 
@@ -470,10 +469,10 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
         semverguard_version: env!("CARGO_PKG_VERSION").to_string(),
         started_at: started
             .format(&Rfc3339)
-            .unwrap_or_else(|_| started.unix_timestamp().to_string()),
+            .expect("failed to format start timestamp"),
         finished_at: finished
             .format(&Rfc3339)
-            .unwrap_or_else(|_| finished.unix_timestamp().to_string()),
+            .expect("failed to format finish timestamp"),
         workspace_root: artifacts.workspace_root,
         packages: artifacts.packages,
         summary: artifacts.summary,
@@ -564,9 +563,9 @@ fn handle_tool_error(
         build_artifact_index(workspace_root, artifacts_root, None, sarif_requested);
 
     // Build capability context indicating failure
-    let git_skipped = !matches!(config.baseline.kind, BaselineKind::Git);
+    let git_skipped = config.baseline.kind != BaselineKind::Git;
     let capability_ctx = CapabilityContext::new()
-        .with_git_available(matches!(config.baseline.kind, BaselineKind::Git))
+        .with_git_available(config.baseline.kind == BaselineKind::Git)
         .with_baseline_available(false)
         .with_baseline_detail(format!("error: {err}"))
         .with_git_skipped(git_skipped);
@@ -680,9 +679,9 @@ fn print_text(report: &RunReport) {
 
 fn write_json(cfg: &SemverguardConfig, report: &RunReport) -> Result<()> {
     let json = if cfg.output.pretty_json {
-        serde_json::to_string_pretty(report)?
+        serde_json::to_string_pretty(report).expect("failed to serialize report JSON")
     } else {
-        serde_json::to_string(report)?
+        serde_json::to_string(report).expect("failed to serialize report JSON")
     };
 
     match &cfg.output.json_path {
@@ -699,7 +698,7 @@ fn write_json(cfg: &SemverguardConfig, report: &RunReport) -> Result<()> {
 fn write_sarif(cfg: &SemverguardConfig, report: &RunReport) -> Result<()> {
     let sarif_log = sarif::report_to_sarif(report);
     let json = sarif::sarif_to_json(&sarif_log, cfg.output.pretty_json)
-        .context("failed to serialize SARIF report")?;
+        .expect("failed to serialize SARIF report");
 
     match &cfg.output.json_path {
         Some(path) => {
@@ -842,8 +841,8 @@ fn validate_config(config: &SemverguardConfig) -> ValidationResult {
     }
 
     // Validate scope mode consistency
-    if matches!(config.scope.mode, ScopeMode::Changed) {
-        if !matches!(config.baseline.kind, BaselineKind::Git) {
+    if config.scope.mode == ScopeMode::Changed {
+        if config.baseline.kind != BaselineKind::Git {
             result.add_error(
                 "scope.mode is \"changed\" requires baseline.kind = \"git\"".to_string(),
             );
@@ -974,7 +973,8 @@ fn run_list(args: &ListArgs) -> Result<()> {
     let list_result = runner.list_packages(&args.workspace_root, &cfg)?;
 
     if args.json {
-        let json = serde_json::to_string_pretty(&list_result)?;
+        let json = serde_json::to_string_pretty(&list_result)
+            .expect("failed to serialize list result JSON");
         println!("{json}");
     } else {
         print_list_text(&list_result);
@@ -1020,7 +1020,11 @@ fn run_explain(args: &ExplainArgs) -> Result<()> {
             // List all finding types
             if args.json {
                 let entries: Vec<_> = explain::all().iter().map(|e| e.to_json_value()).collect();
-                println!("{}", serde_json::to_string_pretty(&entries)?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&entries)
+                        .expect("failed to serialize explanation entries")
+                );
             } else {
                 println!("Finding types:\n");
                 println!(
@@ -1050,7 +1054,11 @@ fn run_explain(args: &ExplainArgs) -> Result<()> {
 
             if args.json {
                 let entries: Vec<_> = matches.iter().map(|e| e.to_json_value()).collect();
-                println!("{}", serde_json::to_string_pretty(&entries)?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&entries)
+                        .expect("failed to serialize explanation entries")
+                );
             } else {
                 for entry in matches {
                     print_explanation(entry);
@@ -1062,7 +1070,11 @@ fn run_explain(args: &ExplainArgs) -> Result<()> {
             match explain::lookup(check_id, code) {
                 Some(entry) => {
                     if args.json {
-                        println!("{}", serde_json::to_string_pretty(&entry.to_json_value())?);
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&entry.to_json_value())
+                                .expect("failed to serialize explanation entry")
+                        );
                     } else {
                         print_explanation(entry);
                     }
@@ -1115,7 +1127,7 @@ fn run_promote_baseline(args: &PromoteBaselineArgs) -> Result<()> {
     // Check if the current config uses crates-io baseline
     if cfg_path.exists() {
         let cfg = config::load_config(&cfg_path)?;
-        if matches!(cfg.baseline.kind, semverguard_types::BaselineKind::CratesIo) {
+        if cfg.baseline.kind == semverguard_types::BaselineKind::CratesIo {
             println!("Baseline kind is crates-io.");
             println!("Crates-io baselines automatically advance when you publish a new version.");
             println!("No configuration change needed.");
@@ -1330,8 +1342,8 @@ path = "src/lib.rs"
             .current_dir(repo)
             .output()
             .expect("run git");
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(output.status.success(), "git {:?} failed: {}", args, stderr);
+        let _stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success());
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
@@ -1354,7 +1366,7 @@ path = "src/lib.rs"
 
         apply_cli_overrides(&mut cfg, &args);
 
-        assert!(matches!(cfg.mode, RunMode::Cockpit));
+        assert_eq!(cfg.mode, RunMode::Cockpit);
         assert_eq!(cfg.output.format, OutputFormat::Receipt);
         assert_eq!(cfg.output.json_path, Some(PathBuf::from("report.json")));
     }
@@ -1402,8 +1414,8 @@ path = "src/lib.rs"
 
         apply_cli_overrides(&mut cfg, &args);
 
-        assert!(matches!(cfg.scope.mode, ScopeMode::Changed));
-        assert!(matches!(cfg.baseline.kind, BaselineKind::CratesIo));
+        assert_eq!(cfg.scope.mode, ScopeMode::Changed);
+        assert_eq!(cfg.baseline.kind, BaselineKind::CratesIo);
         assert_eq!(cfg.baseline.rev, Some("origin/main".to_string()));
         assert_eq!(cfg.baseline.version, Some("1.2.3".to_string()));
         assert!(cfg.engine.fail_fast);
@@ -1493,6 +1505,26 @@ path = "src/lib.rs"
     }
 
     #[test]
+    fn test_run_with_cli_validate_config_error_propagates() {
+        let dir = tempdir().expect("tempdir");
+        let config_path = dir.path().join("semverguard.toml");
+        fs::write(
+            &config_path,
+            r#"[baseline]
+kind = "git"
+"#,
+        )
+        .expect("write config");
+        let cli = Cli {
+            cmd: Commands::ValidateConfig(ValidateConfigArgs {
+                config: Some(config_path),
+            }),
+        };
+        let err = run_with_cli(cli).unwrap_err();
+        assert!(err.to_string().contains("Configuration validation failed"));
+    }
+
+    #[test]
     fn test_run_with_cli_list() {
         let workspace = write_minimal_workspace();
         let config_path = workspace.path().join("semverguard.toml");
@@ -1511,6 +1543,24 @@ path = "src/lib.rs"
     }
 
     #[test]
+    fn test_run_with_cli_list_error_propagates() {
+        let workspace = write_minimal_workspace();
+        let config_dir = workspace.path().join("config-dir");
+        fs::create_dir(&config_dir).expect("create config dir");
+        let cli = Cli {
+            cmd: Commands::List(ListArgs {
+                config: Some(config_dir),
+                workspace_root: workspace.path().to_path_buf(),
+                baseline_rev: None,
+                changed: false,
+                json: false,
+            }),
+        };
+        let err = run_with_cli(cli).unwrap_err();
+        assert!(err.to_string().contains("failed to read"));
+    }
+
+    #[test]
     fn test_run_with_cli_explain() {
         let cli = Cli {
             cmd: Commands::Explain(ExplainArgs {
@@ -1521,6 +1571,19 @@ path = "src/lib.rs"
         };
         let code = run_with_cli(cli).expect("run_with_cli explain");
         assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_run_with_cli_explain_error_propagates() {
+        let cli = Cli {
+            cmd: Commands::Explain(ExplainArgs {
+                check_id: Some("unknown-check".to_string()),
+                code: None,
+                json: false,
+            }),
+        };
+        let err = run_with_cli(cli).unwrap_err();
+        assert!(err.to_string().contains("unknown check_id"));
     }
 
     #[test]
@@ -1544,6 +1607,24 @@ kind = "crates-io"
         };
         let code = run_with_cli(cli).expect("run_with_cli promote_baseline");
         assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_run_with_cli_promote_baseline_error_propagates() {
+        let dir = tempdir().expect("tempdir");
+        fs::write(dir.path().join("README.md"), "init").expect("write file");
+        let _head = init_git_repo(dir.path());
+        let config_path = dir.path().join("missing.toml");
+        let cli = Cli {
+            cmd: Commands::PromoteBaseline(PromoteBaselineArgs {
+                config: Some(config_path),
+                workspace_root: dir.path().to_path_buf(),
+                rev: "HEAD".to_string(),
+                write: false,
+            }),
+        };
+        let err = run_with_cli(cli).unwrap_err();
+        assert!(err.to_string().contains("Config file not found"));
     }
 
     #[test]
@@ -1595,19 +1676,19 @@ kind = "crates-io"
         assert!(!result.errors.is_empty());
         assert!(!result.warnings.is_empty());
         let has_include_error = result.errors.iter().any(|e| e.contains("scope.include"));
-        assert!(has_include_error, "expected include glob error");
+        assert!(has_include_error);
         let has_baseline_error = result
             .errors
             .iter()
             .any(|e| e.contains("baseline.kind is \"git\""));
-        assert!(has_baseline_error, "expected baseline.rev error");
+        assert!(has_baseline_error);
         let has_version_warning = result
             .warnings
             .iter()
             .any(|w| w.contains("baseline.version is set"));
-        assert!(has_version_warning, "expected baseline.version warning");
+        assert!(has_version_warning);
         let has_expire_warning = result.warnings.iter().any(|w| w.contains("expires"));
-        assert!(has_expire_warning, "expected waiver expiration warning");
+        assert!(has_expire_warning);
     }
 
     #[test]
@@ -1634,6 +1715,42 @@ kind = "crates-io"
                 .iter()
                 .any(|e| e.contains("baseline.rustdoc does not exist"))
         );
+    }
+
+    #[test]
+    fn test_validate_config_valid_globs_and_existing_paths() {
+        let dir = tempdir().expect("tempdir");
+        let root_file = dir.path().join("baseline-root.txt");
+        fs::write(&root_file, "root").expect("write root file");
+        let rustdoc_dir = dir.path().join("rustdoc");
+        fs::create_dir(&rustdoc_dir).expect("create rustdoc dir");
+        let cargo_bin = dir.path().join("cargo");
+        fs::write(&cargo_bin, "bin").expect("write cargo bin");
+
+        let mut cfg = SemverguardConfig::default();
+        cfg.scope.include = vec!["crates/*".to_string()];
+        cfg.scope.exclude = vec!["target/**".to_string()];
+        cfg.baseline.root = Some(root_file);
+        cfg.baseline.rustdoc = Some(rustdoc_dir);
+        cfg.engine.cargo_bin = Some(cargo_bin);
+        cfg.waivers = vec![WaiverEntry {
+            fingerprint: "a".repeat(64),
+            reason: "future".to_string(),
+            ticket: None,
+            expires: Some("2099-01-01".to_string()),
+        }];
+
+        let result = validate_config(&cfg);
+
+        assert!(result
+            .errors
+            .iter()
+            .any(|e| e.contains("baseline.root is not a directory")));
+        assert!(result
+            .errors
+            .iter()
+            .any(|e| e.contains("baseline.rustdoc is not a file")));
+        assert!(result.warnings.is_empty());
     }
 
     #[test]
@@ -1675,7 +1792,7 @@ kind = "crates-io"
             .errors
             .iter()
             .any(|e| e.contains("baseline.kind = \"git\""));
-        assert!(has_kind_error, "expected baseline.kind error");
+        assert!(has_kind_error);
     }
 
     #[test]
@@ -1691,7 +1808,7 @@ kind = "crates-io"
         let result = validate_config(&cfg);
 
         let has_fingerprint_error = result.errors.iter().any(|e| e.contains("fingerprint"));
-        assert!(has_fingerprint_error, "expected fingerprint error");
+        assert!(has_fingerprint_error);
     }
 
     #[test]
@@ -1707,7 +1824,7 @@ kind = "crates-io"
         let result = validate_config(&cfg);
 
         let has_expire_warning = result.warnings.iter().any(|w| w.contains("expires"));
-        assert!(has_expire_warning, "expected waiver expiration warning");
+        assert!(has_expire_warning);
     }
 
     #[test]
@@ -1747,7 +1864,7 @@ kind = "crates-io"
         ];
 
         let result = validate_config(&cfg);
-        assert!(!result.warnings.iter().any(|w| w.contains("expires")));
+        assert!(result.warnings.is_empty());
     }
 
     #[test]
@@ -1755,6 +1872,13 @@ kind = "crates-io"
         let args = ValidateConfigArgs {
             config: Some(PathBuf::from("does-not-exist.toml")),
         };
+        let result = run_validate_config(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_validate_config_default_path_missing_is_ok() {
+        let args = ValidateConfigArgs { config: None };
         let result = run_validate_config(&args);
         assert!(result.is_ok());
     }
@@ -1827,6 +1951,17 @@ include = ["["]
 "#,
         )
         .expect("write config");
+
+        let args = ValidateConfigArgs { config: Some(path) };
+        let result = run_validate_config(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_validate_config_invalid_toml_errors() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("semverguard.toml");
+        fs::write(&path, "[baseline\nkind = \"git\"").expect("write invalid toml");
 
         let args = ValidateConfigArgs { config: Some(path) };
         let result = run_validate_config(&args);
@@ -2035,6 +2170,27 @@ include = ["["]
     }
 
     #[test]
+    fn test_handle_tool_error_non_cockpit_write_failure_returns_err() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.output.format = OutputFormat::Receipt;
+        cfg.mode = RunMode::Pr;
+        let dir = tempdir().expect("tempdir");
+        let artifacts = dir.path().join("artifacts");
+        fs::write(&artifacts, "not a dir").expect("write artifacts file");
+
+        let result = handle_tool_error(
+            anyhow::anyhow!("boom"),
+            &cfg,
+            dir.path(),
+            &artifacts,
+            true,
+            false,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_run_check_dry_run_lists_packages() {
         let workspace = write_minimal_workspace();
         let mut args = base_check_args();
@@ -2044,6 +2200,26 @@ include = ["["]
 
         let code = run_check(&args).expect("run_check dry-run");
         assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_run_check_dry_run_list_packages_error() {
+        let workspace = write_minimal_workspace();
+        let config_path = workspace.path().join("semverguard.toml");
+        fs::write(
+            &config_path,
+            r#"[scope]
+include = ["["]
+"#,
+        )
+        .expect("write config");
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(config_path);
+        args.dry_run = true;
+
+        let result = run_check(&args);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -2166,6 +2342,42 @@ include = ["nonexistent-*"]
     }
 
     #[test]
+    fn test_run_check_receipt_write_error_propagates() {
+        let workspace = write_minimal_workspace();
+        let fake_cargo = write_fake_cargo(0);
+        let artifacts = workspace.path().join("artifacts");
+        fs::write(&artifacts, "not a dir").expect("write artifacts file");
+
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(workspace.path().join("semverguard.toml"));
+        args.format = Some(FormatOpt::Receipt);
+        args.cargo_bin = Some(fake_cargo.path.clone());
+        args.artifacts_dir = Some(artifacts);
+
+        let result = run_check(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_check_emit_outputs_json_write_error() {
+        let workspace = write_minimal_workspace();
+        let fake_cargo = write_fake_cargo(0);
+        let json_dir = workspace.path().join("json-dir");
+        fs::create_dir(&json_dir).expect("create json dir");
+
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(workspace.path().join("semverguard.toml"));
+        args.format = Some(FormatOpt::Json);
+        args.json = Some(json_dir);
+        args.cargo_bin = Some(fake_cargo.path.clone());
+
+        let result = run_check(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_run_check_missing_workspace_root_receipt() {
         let dir = tempdir().expect("tempdir");
         let missing_root = dir.path().join("missing-workspace");
@@ -2196,6 +2408,76 @@ include = ["nonexistent-*"]
 
         let result = run_list(&args);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_list_default_config_ok() {
+        let workspace = write_minimal_workspace();
+        let args = ListArgs {
+            config: None,
+            workspace_root: workspace.path().to_path_buf(),
+            baseline_rev: None,
+            changed: false,
+            json: false,
+        };
+
+        let result = run_list(&args);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_list_invalid_workspace_root_errors() {
+        let dir = tempdir().expect("tempdir");
+        let args = ListArgs {
+            config: Some(PathBuf::from("does-not-exist.toml")),
+            workspace_root: dir.path().join("missing"),
+            baseline_rev: None,
+            changed: false,
+            json: false,
+        };
+
+        let result = run_list(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_list_invalid_config_path_errors() {
+        let workspace = write_minimal_workspace();
+        let config_dir = workspace.path().join("config-dir");
+        fs::create_dir(&config_dir).expect("create config dir");
+        let args = ListArgs {
+            config: Some(config_dir),
+            workspace_root: workspace.path().to_path_buf(),
+            baseline_rev: None,
+            changed: false,
+            json: false,
+        };
+
+        let result = run_list(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_list_invalid_glob_errors() {
+        let workspace = write_minimal_workspace();
+        let config_path = workspace.path().join("semverguard.toml");
+        fs::write(
+            &config_path,
+            r#"[scope]
+include = ["["]
+"#,
+        )
+        .expect("write config");
+        let args = ListArgs {
+            config: Some(config_path),
+            workspace_root: workspace.path().to_path_buf(),
+            baseline_rev: None,
+            changed: false,
+            json: false,
+        };
+
+        let result = run_list(&args);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -2289,6 +2571,53 @@ kind = "crates-io"
         let result = run_promote_baseline(&args);
         let err = result.unwrap_err();
         assert!(err.to_string().contains("Config file not found"));
+    }
+
+    #[test]
+    fn test_run_promote_baseline_resolve_head_error() {
+        let dir = tempdir().expect("tempdir");
+        let config_path = dir.path().join("semverguard.toml");
+        fs::write(
+            &config_path,
+            r#"[baseline]
+kind = "git"
+"#,
+        )
+        .expect("write config");
+
+        let args = PromoteBaselineArgs {
+            config: Some(config_path),
+            workspace_root: dir.path().to_path_buf(),
+            rev: "HEAD".to_string(),
+            write: false,
+        };
+
+        let result = run_promote_baseline(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_promote_baseline_resolve_ref_error() {
+        let dir = tempdir().expect("tempdir");
+        let config_path = dir.path().join("semverguard.toml");
+        fs::write(
+            &config_path,
+            r#"[baseline]
+kind = "git"
+"#,
+        )
+        .expect("write config");
+        let _head = init_git_repo(dir.path());
+
+        let args = PromoteBaselineArgs {
+            config: Some(config_path),
+            workspace_root: dir.path().to_path_buf(),
+            rev: "missing-ref".to_string(),
+            write: false,
+        };
+
+        let result = run_promote_baseline(&args);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -2395,7 +2724,7 @@ kind = "git"
     #[test]
     fn test_print_config_ok() {
         let cfg = SemverguardConfig::default();
-        print_config(&cfg).expect("print config");
+        print_config(&cfg);
     }
 
     #[test]
@@ -2407,6 +2736,16 @@ kind = "git"
     }
 
     #[test]
+    fn test_write_json_errors_on_directory_path() {
+        let dir = tempdir().expect("tempdir");
+        let mut cfg = SemverguardConfig::default();
+        cfg.output.pretty_json = false;
+        cfg.output.json_path = Some(dir.path().to_path_buf());
+        let result = write_json(&cfg, &sample_report());
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_write_sarif_prints_when_no_path() {
         let mut cfg = SemverguardConfig::default();
         cfg.output.pretty_json = true;
@@ -2415,8 +2754,72 @@ kind = "git"
     }
 
     #[test]
+    fn test_write_sarif_errors_on_directory_path() {
+        let dir = tempdir().expect("tempdir");
+        let mut cfg = SemverguardConfig::default();
+        cfg.output.pretty_json = false;
+        cfg.output.json_path = Some(dir.path().to_path_buf());
+        let result = write_sarif(&cfg, &sample_report());
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_print_text_covers_status_branches() {
         print_text(&sample_report());
+    }
+
+    #[test]
+    fn test_print_text_handles_empty_stderr_and_missing_skip_reason() {
+        let packages = vec![
+            PackageReport {
+                name: "epsilon".to_string(),
+                version: "0.1.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/epsilon/Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: None,
+                duration_ms: 1,
+                command: vec!["cargo".to_string(), "semver-checks".to_string()],
+                engine: Some(SemverCheckOutput {
+                    exit_code: Some(1),
+                    success: false,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    required_bump: None,
+                }),
+                inferred_required_bump: None,
+                failure_kind: Some(FailureKind::SemverViolation),
+                baseline_error: None,
+            },
+            PackageReport {
+                name: "zeta".to_string(),
+                version: "0.2.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/zeta/Cargo.toml"),
+                status: PackageStatus::Failed,
+                skip_reason: None,
+                duration_ms: 2,
+                command: vec!["cargo".to_string(), "semver-checks".to_string()],
+                engine: None,
+                inferred_required_bump: None,
+                failure_kind: Some(FailureKind::ToolError),
+                baseline_error: None,
+            },
+        ];
+
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:00:01Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages,
+            summary: Summary {
+                total: 2,
+                passed: 0,
+                failed: 2,
+                skipped: 0,
+            },
+        };
+
+        print_text(&report);
     }
 
     #[test]

@@ -163,7 +163,7 @@ impl TestWorld {
             config.baseline.rev = None;
         }
 
-        let runner = if matches!(config.scope.mode, ScopeMode::Changed) {
+        let runner = if config.scope.mode == ScopeMode::Changed {
             SemverguardRunner::new(&workspace, Some(&git), &engine)
         } else {
             SemverguardRunner::new(&workspace, None, &engine)
@@ -183,7 +183,7 @@ impl TestWorld {
             config.baseline.rev = None;
         }
 
-        let runner = if matches!(config.scope.mode, ScopeMode::Changed) {
+        let runner = if config.scope.mode == ScopeMode::Changed {
             SemverguardRunner::new(&workspace, Some(&git), &engine)
         } else {
             SemverguardRunner::new(&workspace, None, &engine)

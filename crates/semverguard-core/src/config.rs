@@ -73,8 +73,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("semverguard.toml");
         let cfg = load_config(&path).unwrap();
-        assert!(matches!(cfg.baseline.kind, BaselineKind::CratesIo));
-        assert!(matches!(cfg.output.format, OutputFormat::Text));
+        assert_eq!(cfg.baseline.kind, BaselineKind::CratesIo);
+        assert_eq!(cfg.output.format, OutputFormat::Text);
     }
 
     #[test]
@@ -84,6 +84,15 @@ mod tests {
         fs::write(&path, "[baseline\nkind = \"git\"").unwrap();
         let err = load_config(&path).unwrap_err();
         assert!(err.to_string().contains("invalid TOML"));
+    }
+
+    #[test]
+    fn test_load_config_read_error() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config_dir");
+        fs::create_dir(&path).unwrap();
+        let err = load_config(&path).unwrap_err();
+        assert!(err.to_string().contains("failed to read"));
     }
 
     #[test]
@@ -105,9 +114,9 @@ pretty_json = false
         .unwrap();
 
         let cfg = load_config(&path).unwrap();
-        assert!(matches!(cfg.baseline.kind, BaselineKind::Git));
+        assert_eq!(cfg.baseline.kind, BaselineKind::Git);
         assert_eq!(cfg.baseline.rev.as_deref(), Some("origin/main"));
-        assert!(matches!(cfg.output.format, OutputFormat::Receipt));
+        assert_eq!(cfg.output.format, OutputFormat::Receipt);
         assert!(!cfg.output.pretty_json);
     }
 }

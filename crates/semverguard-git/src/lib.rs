@@ -49,14 +49,14 @@ impl GitCli {
             .map_err(|e| SemverguardError::Git(format!("failed to run git: {e}")))?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8(output.stderr)?;
+            let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(SemverguardError::Git(format!(
                 "git command failed (exit {:?}): {stderr}",
                 output.status.code()
             )));
         }
 
-        Ok(String::from_utf8(output.stdout)?)
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
     /// Check if git is available.
@@ -79,8 +79,7 @@ impl GitCli {
 
     /// Resolve HEAD to a full commit SHA.
     pub fn resolve_head(&self, workspace_root: &Path) -> Result<String> {
-        let output = self.run_git(workspace_root, &["rev-parse", "HEAD"])?;
-        Ok(output.trim().to_string())
+        self.resolve_ref(workspace_root, "HEAD")
     }
 
     /// Resolve a ref to a full commit SHA.
