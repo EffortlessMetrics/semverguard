@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "capability_info": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["available", "unavailable", "skipped"] },
+        "detail": { "type": ["string", "null"] },
+        "reason": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "required": ["schema", "tool", "run", "verdict", "findings", "artifacts"],
+  "properties": {
+    "schema": { "const": "sensor.report.v1" },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "repository_url": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "run": {
+      "type": "object",
+      "required": ["started_at", "finished_at", "duration_ms", "workspace_root", "baseline"],
+      "properties": {
+        "started_at": { "type": "string" },
+        "finished_at": { "type": "string" },
+        "duration_ms": { "type": "integer" },
+        "workspace_root": { "type": "string" },
+        "baseline": { "type": "object" },
+        "capabilities": {
+          "type": ["object", "null"],
+          "properties": {
+            "git": { "$ref": "#/$defs/capability_info" },
+            "baseline": { "$ref": "#/$defs/capability_info" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "verdict": {
+      "type": "object",
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["pass", "warn", "fail", "skip"] },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": true
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["check_id", "code", "level", "message"],
+        "properties": {
+          "check_id": { "type": "string" },
+          "code": { "type": "string" },
+          "level": { "enum": ["error", "warning", "info"] },
+          "message": { "type": "string" },
+          "location": { "type": ["object", "null"] },
+          "data": { "type": ["object", "array", "string", "number", "boolean", "null"] },
+          "fingerprint": { "type": ["string", "null"] }
+        },
+        "additionalProperties": true
+      }
+    },
+    "data": { "type": ["object", "null"] },
+    "artifacts": {
+      "type": "object",
+      "required": ["report_json", "comment_md", "raw_logs"],
+      "properties": {
+        "report_json": { "type": "string" },
+        "comment_md": { "type": "string" },
+        "sarif_json": { "type": ["string", "null"] },
+        "raw_logs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["package", "version"],
+            "properties": {
+              "package": { "type": "string" },
+              "version": { "type": "string" },
+              "stdout": { "type": ["string", "null"] },
+              "stderr": { "type": ["string", "null"] }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

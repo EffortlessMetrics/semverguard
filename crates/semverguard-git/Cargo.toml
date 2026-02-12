@@ -1,11 +1,19 @@
 [package]
 name = "semverguard-git"
 version = "0.1.0"
-description = "Git adapter for semverguard (git CLI)."
+description = "Git adapter for semverguard - detects changed crates via git CLI."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/semverguard-git"
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
 
 [dependencies]
-semverguard-domain = { path = "../semverguard-domain" }
+semverguard-domain = { version = "0.1.0", path = "../semverguard-domain" }
+
+[dev-dependencies]
+tempfile = "3.24.0"

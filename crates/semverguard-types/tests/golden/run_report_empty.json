@@ -1,0 +1,13 @@
+{
+  "semverguard_version": "0.1.0",
+  "started_at": "2024-01-15T10:00:00Z",
+  "finished_at": "2024-01-15T10:00:01Z",
+  "workspace_root": "/workspace",
+  "packages": [],
+  "summary": {
+    "total": 0,
+    "passed": 0,
+    "failed": 0,
+    "skipped": 0
+  }
+}

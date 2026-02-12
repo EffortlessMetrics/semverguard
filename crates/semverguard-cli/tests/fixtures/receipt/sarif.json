@@ -1,0 +1,169 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "semverguard",
+          "semanticVersion": "0.1.0",
+          "fullName": "semverguard 0.1.0",
+          "informationUri": "https://github.com/EffortlessMetrics/semverguard",
+          "rules": [
+            {
+              "id": "semverguard/breaking-change",
+              "shortDescription": {
+                "text": "Breaking API change detected"
+              },
+              "fullDescription": {
+                "text": "A breaking change to the public API was detected that violates semantic versioning rules."
+              },
+              "help": {
+                "text": "Review the changes and either revert the breaking change or bump the major version."
+              },
+              "helpUri": "https://semver.org/",
+              "defaultConfiguration": {
+                "level": "error"
+              }
+            },
+            {
+              "id": "semverguard/major-bump-required",
+              "shortDescription": {
+                "text": "Major version bump required"
+              },
+              "fullDescription": {
+                "text": "Breaking changes require a major version bump according to semantic versioning."
+              },
+              "help": {
+                "text": "Increment the major version number (e.g., 1.0.0 -> 2.0.0)."
+              },
+              "helpUri": "https://semver.org/#spec-item-8",
+              "defaultConfiguration": {
+                "level": "error"
+              }
+            },
+            {
+              "id": "semverguard/minor-bump-required",
+              "shortDescription": {
+                "text": "Minor version bump required"
+              },
+              "fullDescription": {
+                "text": "New functionality requires a minor version bump according to semantic versioning."
+              },
+              "help": {
+                "text": "Increment the minor version number (e.g., 1.0.0 -> 1.1.0)."
+              },
+              "helpUri": "https://semver.org/#spec-item-7",
+              "defaultConfiguration": {
+                "level": "warning"
+              }
+            },
+            {
+              "id": "semverguard/patch-bump-required",
+              "shortDescription": {
+                "text": "Patch version bump required"
+              },
+              "fullDescription": {
+                "text": "Bug fixes require a patch version bump according to semantic versioning."
+              },
+              "help": {
+                "text": "Increment the patch version number (e.g., 1.0.0 -> 1.0.1)."
+              },
+              "helpUri": "https://semver.org/#spec-item-6",
+              "defaultConfiguration": {
+                "level": "note"
+              }
+            },
+            {
+              "id": "semverguard/tool-error",
+              "shortDescription": {
+                "text": "Tool error during semver checks"
+              },
+              "fullDescription": {
+                "text": "Semverguard encountered a tool or execution error while running checks."
+              },
+              "help": {
+                "text": "Review engine logs and configuration, then retry the check."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              }
+            },
+            {
+              "id": "semverguard/baseline-error",
+              "shortDescription": {
+                "text": "Baseline error detected"
+              },
+              "fullDescription": {
+                "text": "Semverguard could not resolve or access the requested baseline."
+              },
+              "help": {
+                "text": "Verify the baseline reference and ensure required history is available."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "semverguard/major-bump-required",
+          "level": "error",
+          "message": {
+            "text": "Package `alpha` (v1.0.0) requires a major version bump (see raw log: artifacts/semverguard/raw/alpha-1.0.0.stderr.log)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "manifest-alpha.toml"
+                }
+              }
+            }
+          ],
+          "properties": {
+            "packageName": "alpha",
+            "packageVersion": "1.0.0",
+            "requiredBump": "major",
+            "rawStderrLog": "artifacts/semverguard/raw/alpha-1.0.0.stderr.log",
+            "failureKind": "semver-violation"
+          }
+        },
+        {
+          "ruleId": "semverguard/baseline-error",
+          "level": "warning",
+          "message": {
+            "text": "Baseline error for `beta` (v0.2.0): baseline not found (see raw log: artifacts/semverguard/raw/beta-0.2.0.stderr.log)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "manifest-beta.toml"
+                }
+              }
+            }
+          ],
+          "properties": {
+            "packageName": "beta",
+            "packageVersion": "0.2.0",
+            "rawStderrLog": "artifacts/semverguard/raw/beta-0.2.0.stderr.log",
+            "failureKind": "baseline-error"
+          }
+        }
+      ],
+      "invocations": [
+        {
+          "executionSuccessful": false,
+          "startTimeUtc": "2024-01-15T10:00:00Z",
+          "endTimeUtc": "2024-01-15T10:01:30Z",
+          "workingDirectory": {
+            "uri": "workspace"
+          }
+        }
+      ]
+    }
+  ]
+}

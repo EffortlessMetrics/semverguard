@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Source of truth is contracts/list.result.v1.json",
+  "$id": "list.result.v1",
+  "title": "ListResult",
+  "description": "Result of listing packages without running checks.",
+  "type": "object",
+  "required": ["workspace_root", "would_check", "would_skip"],
+  "properties": {
+    "workspace_root": {
+      "type": "string",
+      "description": "Workspace root directory."
+    },
+    "would_check": {
+      "type": "array",
+      "description": "Packages that would be checked.",
+      "items": { "$ref": "#/$defs/ListedPackage" }
+    },
+    "would_skip": {
+      "type": "array",
+      "description": "Packages that would be skipped.",
+      "items": { "$ref": "#/$defs/SkippedPackage" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ListedPackage": {
+      "type": "object",
+      "description": "A package that would be checked.",
+      "required": ["name", "version", "manifest_path"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Cargo package name."
+        },
+        "version": {
+          "type": "string",
+          "description": "Cargo package version."
+        },
+        "manifest_path": {
+          "type": "string",
+          "description": "Path to the package's Cargo.toml."
+        }
+      },
+      "additionalProperties": false
+    },
+    "SkippedPackage": {
+      "type": "object",
+      "description": "A package that would be skipped.",
+      "required": ["name", "version", "manifest_path", "reason"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Cargo package name."
+        },
+        "version": {
+          "type": "string",
+          "description": "Cargo package version."
+        },
+        "manifest_path": {
+          "type": "string",
+          "description": "Path to the package's Cargo.toml."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why this package would be skipped."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

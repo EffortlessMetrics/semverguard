@@ -1,0 +1,15 @@
+[book]
+title = "semverguard"
+authors = ["semverguard contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/your-org/semverguard"
+edit-url-template = "https://github.com/your-org/semverguard/edit/main/docs/{path}"

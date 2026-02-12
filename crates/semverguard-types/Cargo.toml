@@ -1,12 +1,22 @@
 [package]
 name = "semverguard-types"
 version = "0.1.0"
-description = "Shared types (config + report schema) for semverguard."
+description = "Shared types (config and report schema) for semverguard."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/semverguard-types"
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-semver = { version = "1", features = ["serde"] }
+serde = { version = "1.0.228", features = ["derive"] }
+semver = { version = "1.0.27", features = ["serde"] }
+serde_json = "1.0.149"
+
+[dev-dependencies]
+toml = "0.9.8"
+jsonschema = "0.41.0"

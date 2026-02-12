@@ -1,0 +1,220 @@
+name: "semverguard"
+description: "Run SemVer compatibility checks across your Cargo workspace"
+author: "EffortlessMetrics"
+
+branding:
+  icon: "shield"
+  color: "orange"
+
+inputs:
+  mode:
+    description: "Check mode: 'pr' (tolerant), 'release' (strict), or 'cockpit' (receipt-driven, exit 0)"
+    required: false
+    default: "pr"
+  baseline-rev:
+    description: "Git revision to compare against (e.g., origin/main). Required for 'pr' mode."
+    required: false
+    default: "origin/main"
+  changed:
+    description: "Only check packages changed relative to baseline-rev"
+    required: false
+    default: "true"
+  json-path:
+    description: "Path to write JSON report"
+    required: false
+    default: "semverguard-report.json"
+  sarif-path:
+    description: "Path to write SARIF report for GitHub Code Scanning"
+    required: false
+    default: ""
+  upload-sarif:
+    description: "Upload SARIF to GitHub Code Scanning (requires 'security-events: write' permission)"
+    required: false
+    default: "false"
+  fail-on-warning:
+    description: "Fail if warnings (baseline errors) are detected"
+    required: false
+    default: "false"
+  working-directory:
+    description: "Working directory for running semverguard"
+    required: false
+    default: "."
+  cargo-semver-checks-version:
+    description: "Version of cargo-semver-checks to install (pinned for MSRV drift protection)"
+    required: false
+    default: "0.35.0"
+  semverguard-version:
+    description: "Version of semverguard to install (or 'source' to build from source)"
+    required: false
+    default: "source"
+  extra-args:
+    description: "Extra arguments to pass to semverguard check"
+    required: false
+    default: ""
+
+outputs:
+  exit-code:
+    description: "Exit code from semverguard (0=pass, 1=tool error, 2=semver failure, 3=warning-as-fail)"
+    value: ${{ steps.run.outputs.exit-code }}
+  json-report:
+    description: "Path to the generated JSON report"
+    value: ${{ steps.run.outputs.json-report }}
+  sarif-report:
+    description: "Path to the generated SARIF report (if enabled)"
+    value: ${{ steps.run.outputs.sarif-report }}
+  summary:
+    description: "Brief summary of results (total/passed/failed/skipped)"
+    value: ${{ steps.run.outputs.summary }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          ~/.cargo/bin
+        key: ${{ runner.os }}-cargo-semver-checks-${{ inputs.cargo-semver-checks-version }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-semver-checks-
+
+    - name: Install cargo-semver-checks
+      shell: bash
+      run: |
+        VERSION="${{ inputs.cargo-semver-checks-version }}"
+
+        # Check if already installed with correct version
+        if command -v cargo-semver-checks &> /dev/null; then
+          INSTALLED_VERSION=$(cargo semver-checks --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+          if [ "$INSTALLED_VERSION" = "$VERSION" ]; then
+            echo "cargo-semver-checks $VERSION already installed"
+            exit 0
+          fi
+        fi
+
+        echo "Installing cargo-semver-checks $VERSION..."
+        cargo install cargo-semver-checks --version "$VERSION" --locked
+
+    - name: Install/Build semverguard
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        VERSION="${{ inputs.semverguard-version }}"
+
+        if [ "$VERSION" = "source" ]; then
+          echo "Building semverguard from source..."
+          cargo build --release -p semverguard-cli
+          echo "SEMVERGUARD_BIN=./target/release/semverguard" >> $GITHUB_ENV
+        else
+          echo "Installing semverguard $VERSION..."
+          cargo install semverguard-cli --version "$VERSION" --locked
+          echo "SEMVERGUARD_BIN=semverguard" >> $GITHUB_ENV
+        fi
+
+    - name: Run semverguard
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set +e  # Don't exit on error - we need to capture exit code
+
+        # Build command arguments as an array to handle spaces correctly
+        declare -a ARGS
+        ARGS+=("check")
+
+        # Pass --mode to CLI
+        MODE="${{ inputs.mode }}"
+        if [ -n "$MODE" ] && [ "$MODE" != "auto" ]; then
+          ARGS+=("--mode" "$MODE")
+        fi
+
+        # --changed flag
+        CHANGED="${{ inputs.changed }}"
+        if [ "$CHANGED" = "true" ]; then
+          ARGS+=("--changed")
+        fi
+
+        # --baseline-rev
+        BASELINE_REV="${{ inputs.baseline-rev }}"
+        if [ -n "$BASELINE_REV" ]; then
+          ARGS+=("--baseline-rev" "$BASELINE_REV")
+        fi
+
+        # --warn-as-fail
+        if [ "${{ inputs.fail-on-warning }}" = "true" ]; then
+          ARGS+=("--warn-as-fail")
+        fi
+
+        # Output paths
+        JSON_PATH="${{ inputs.json-path }}"
+        SARIF_PATH="${{ inputs.sarif-path }}"
+
+        if [ -n "$JSON_PATH" ]; then
+          ARGS+=("--json" "$JSON_PATH")
+        fi
+
+        if [ -n "$SARIF_PATH" ]; then
+          ARGS+=("--sarif" "$SARIF_PATH")
+        fi
+
+        # Progress disabled in CI for cleaner logs
+        ARGS+=("--progress" "never")
+
+        # Handle extra arguments (if any)
+        # Note: If extra-args contains multiple flags, this naive append might 
+        # still be tricky, but it is better than eval.
+        if [ -n "${{ inputs.extra-args }}" ]; then
+          read -ra EXTRA <<< "${{ inputs.extra-args }}"
+          ARGS+=("${EXTRA[@]}")
+        fi
+
+        echo "Running: $SEMVERGUARD_BIN ${ARGS[*]}"
+        "$SEMVERGUARD_BIN" "${ARGS[@]}"
+        EXIT_CODE=$?
+
+        # Set outputs
+        echo "exit-code=$EXIT_CODE" >> $GITHUB_OUTPUT
+        echo "json-report=$JSON_PATH" >> $GITHUB_OUTPUT
+        if [ -n "$SARIF_PATH" ]; then
+          echo "sarif-report=$SARIF_PATH" >> $GITHUB_OUTPUT
+        fi
+
+        # Parse summary from JSON if available
+        if [ -f "$JSON_PATH" ]; then
+          TOTAL=$(jq -r '.summary.total // 0' "$JSON_PATH" 2>/dev/null || echo "0")
+          PASSED=$(jq -r '.summary.passed // 0' "$JSON_PATH" 2>/dev/null || echo "0")
+          FAILED=$(jq -r '.summary.failed // 0' "$JSON_PATH" 2>/dev/null || echo "0")
+          SKIPPED=$(jq -r '.summary.skipped // 0' "$JSON_PATH" 2>/dev/null || echo "0")
+          echo "summary=total=$TOTAL passed=$PASSED failed=$FAILED skipped=$SKIPPED" >> $GITHUB_OUTPUT
+        fi
+
+        # Exit with captured code
+        exit $EXIT_CODE
+
+    - name: Upload JSON report
+      if: always() && inputs.json-path != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: semverguard-report
+        path: ${{ inputs.working-directory }}/${{ inputs.json-path }}
+        if-no-files-found: ignore
+
+    - name: Upload SARIF report artifact
+      if: always() && inputs.sarif-path != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: semverguard-sarif
+        path: ${{ inputs.working-directory }}/${{ inputs.sarif-path }}
+        if-no-files-found: ignore
+
+    - name: Upload SARIF to GitHub Code Scanning
+      if: always() && inputs.upload-sarif == 'true' && inputs.sarif-path != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.working-directory }}/${{ inputs.sarif-path }}
+        category: semverguard

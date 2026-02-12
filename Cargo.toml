@@ -6,11 +6,17 @@ members = [
   "crates/semverguard-workspace",
   "crates/semverguard-git",
   "crates/semverguard-engine",
+  "crates/semverguard-core",
   "crates/semverguard-cli",
+  "crates/semverguard-integration-tests",
 ]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://example.invalid/semverguard"
-rust-version = "1.74"
+repository = "https://github.com/EffortlessMetrics/semverguard"
+rust-version = "1.92"
+homepage = "https://github.com/EffortlessMetrics/semverguard"
+documentation = "https://docs.rs/semverguard-cli"
+keywords = ["semver", "versioning", "semantic-versioning", "cargo", "ci"]
+categories = ["development-tools", "development-tools::cargo-plugins"]

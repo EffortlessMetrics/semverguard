@@ -1,0 +1,194 @@
+# Reusable workflow for semverguard checks
+# Call from your repository's workflow like:
+#
+#   jobs:
+#     semver:
+#       uses: EffortlessMetrics/semverguard/.github/workflows/reusable-semver-check.yml@main
+#       with:
+#         baseline-rev: origin/main
+#       permissions:
+#         contents: read
+#         security-events: write  # Optional: for SARIF upload
+
+name: Reusable SemVer Check
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "Check mode: 'pr' (tolerant), 'release' (strict), or 'cockpit' (receipt-driven, exit 0)"
+        required: false
+        default: "pr"
+        type: string
+      baseline-rev:
+        description: "Git revision to compare against"
+        required: false
+        default: "origin/main"
+        type: string
+      changed:
+        description: "Only check changed packages"
+        required: false
+        default: true
+        type: boolean
+      json-path:
+        description: "Path for JSON report"
+        required: false
+        default: "semverguard-report.json"
+        type: string
+      sarif-path:
+        description: "Path for SARIF report"
+        required: false
+        default: ""
+        type: string
+      upload-sarif:
+        description: "Upload SARIF to Code Scanning"
+        required: false
+        default: false
+        type: boolean
+      cargo-semver-checks-version:
+        description: "Version of cargo-semver-checks"
+        required: false
+        default: "0.35.0"
+        type: string
+      runs-on:
+        description: "Runner to use"
+        required: false
+        default: "ubuntu-latest"
+        type: string
+      working-directory:
+        description: "Working directory"
+        required: false
+        default: "."
+        type: string
+
+    outputs:
+      exit-code:
+        description: "Exit code from semverguard"
+        value: ${{ jobs.semver-check.outputs.exit-code }}
+      summary:
+        description: "Summary of results"
+        value: ${{ jobs.semver-check.outputs.summary }}
+
+jobs:
+  semver-check:
+    name: SemVer Check
+    runs-on: ${{ inputs.runs-on }}
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      exit-code: ${{ steps.semverguard.outputs.exit-code }}
+      summary: ${{ steps.semverguard.outputs.summary }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin
+          key: ${{ runner.os }}-cargo-semver-${{ inputs.cargo-semver-checks-version }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-semver-
+
+      - name: Install cargo-semver-checks
+        run: |
+          VERSION="${{ inputs.cargo-semver-checks-version }}"
+          if command -v cargo-semver-checks &> /dev/null; then
+            INSTALLED=$(cargo semver-checks --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+            if [ "$INSTALLED" = "$VERSION" ]; then
+              echo "cargo-semver-checks $VERSION already installed"
+              exit 0
+            fi
+          fi
+          cargo install cargo-semver-checks --version "$VERSION" --locked
+
+      - name: Checkout semverguard
+        uses: actions/checkout@v4
+        with:
+          repository: EffortlessMetrics/semverguard
+          path: .semverguard-tool
+
+      - name: Build semverguard
+        working-directory: .semverguard-tool
+        run: cargo build --release -p semverguard-cli
+
+      - name: Run semverguard
+        id: semverguard
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          set +e
+
+          SEMVERGUARD="../.semverguard-tool/target/release/semverguard"
+          ARGS="check --progress never"
+
+          # Pass --mode to CLI
+          MODE="${{ inputs.mode }}"
+          if [ -n "$MODE" ] && [ "$MODE" != "auto" ]; then
+            ARGS="$ARGS --mode $MODE"
+          fi
+
+          # --changed flag
+          if [ "${{ inputs.changed }}" = "true" ]; then
+            ARGS="$ARGS --changed"
+          fi
+
+          if [ -n "${{ inputs.baseline-rev }}" ]; then
+            ARGS="$ARGS --baseline-rev ${{ inputs.baseline-rev }}"
+          fi
+
+          if [ -n "${{ inputs.json-path }}" ]; then
+            ARGS="$ARGS --json ${{ inputs.json-path }}"
+          fi
+
+          if [ -n "${{ inputs.sarif-path }}" ]; then
+            ARGS="$ARGS --sarif ${{ inputs.sarif-path }}"
+          fi
+
+          echo "Running: $SEMVERGUARD $ARGS"
+          $SEMVERGUARD $ARGS
+          EXIT_CODE=$?
+
+          echo "exit-code=$EXIT_CODE" >> $GITHUB_OUTPUT
+
+          if [ -f "${{ inputs.json-path }}" ]; then
+            TOTAL=$(jq -r '.summary.total // 0' "${{ inputs.json-path }}" 2>/dev/null || echo "0")
+            PASSED=$(jq -r '.summary.passed // 0' "${{ inputs.json-path }}" 2>/dev/null || echo "0")
+            FAILED=$(jq -r '.summary.failed // 0' "${{ inputs.json-path }}" 2>/dev/null || echo "0")
+            SKIPPED=$(jq -r '.summary.skipped // 0' "${{ inputs.json-path }}" 2>/dev/null || echo "0")
+            echo "summary=total=$TOTAL passed=$PASSED failed=$FAILED skipped=$SKIPPED" >> $GITHUB_OUTPUT
+          fi
+
+          exit $EXIT_CODE
+
+      - name: Upload JSON report
+        if: always() && inputs.json-path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: semverguard-report
+          path: ${{ inputs.working-directory }}/${{ inputs.json-path }}
+          if-no-files-found: ignore
+
+      - name: Upload SARIF artifact
+        if: always() && inputs.sarif-path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: semverguard-sarif
+          path: ${{ inputs.working-directory }}/${{ inputs.sarif-path }}
+          if-no-files-found: ignore
+
+      - name: Upload SARIF to Code Scanning
+        if: always() && inputs.upload-sarif && inputs.sarif-path != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ inputs.working-directory }}/${{ inputs.sarif-path }}
+          category: semverguard

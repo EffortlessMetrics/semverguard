@@ -1,0 +1,9 @@
+[package]
+name = "lib-pkg"
+version = "1.0.0"
+edition = "2024"
+
+# publish is unset, so it's publishable to any registry
+
+[lib]
+path = "src/lib.rs"

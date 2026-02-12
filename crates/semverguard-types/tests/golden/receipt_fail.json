@@ -1,0 +1,60 @@
+{
+  "schema": "sensor.report.v1",
+  "tool": {
+    "name": "semverguard",
+    "version": "0.1.0",
+    "repository_url": null
+  },
+  "run": {
+    "started_at": "2024-01-15T10:00:00Z",
+    "finished_at": "2024-01-15T10:01:00Z",
+    "duration_ms": 60000,
+    "workspace_root": "/workspace",
+    "baseline": {
+      "kind": "git",
+      "version": null,
+      "rev": "origin/main",
+      "root": null,
+      "rustdoc": null
+    }
+  },
+  "verdict": {
+    "status": "fail",
+    "reasons": ["semver_violation"]
+  },
+  "findings": [
+    {
+      "check_id": "semver",
+      "code": "violation",
+      "level": "error",
+      "message": "Package `lib-a` (v1.0.0) requires a major version bump",
+      "location": {
+        "path": "crates/lib-a/Cargo.toml",
+        "line": null,
+        "column": null,
+        "raw_log": "artifacts/semverguard/raw/lib-a-1.0.0.stderr.log"
+      },
+      "data": {
+        "package": "lib-a",
+        "version": "1.0.0",
+        "required_bump": "major",
+        "failure_kind": "semver-violation",
+        "manifest_path": "/workspace/crates/lib-a/Cargo.toml"
+      }
+    }
+  ],
+  "data": null,
+  "artifacts": {
+    "report_json": "artifacts/semverguard/report.json",
+    "comment_md": "artifacts/semverguard/comment.md",
+    "sarif_json": null,
+    "raw_logs": [
+      {
+        "package": "lib-a",
+        "version": "1.0.0",
+        "stdout": "artifacts/semverguard/raw/lib-a-1.0.0.stdout.log",
+        "stderr": "artifacts/semverguard/raw/lib-a-1.0.0.stderr.log"
+      }
+    ]
+  }
+}

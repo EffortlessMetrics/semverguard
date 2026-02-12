@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Source of truth is contracts/run.report.v1.json",
+  "$id": "run.report.v1",
+  "title": "RunReport",
+  "description": "Top-level report for a semverguard run.",
+  "type": "object",
+  "required": ["semverguard_version", "started_at", "finished_at", "workspace_root", "packages", "summary"],
+  "properties": {
+    "semverguard_version": {
+      "type": "string",
+      "description": "Semverguard version (from CLI crate)."
+    },
+    "started_at": {
+      "type": "string",
+      "description": "ISO8601 start timestamp (UTC)."
+    },
+    "finished_at": {
+      "type": "string",
+      "description": "ISO8601 finish timestamp (UTC)."
+    },
+    "workspace_root": {
+      "type": "string",
+      "description": "Workspace root directory."
+    },
+    "packages": {
+      "type": "array",
+      "description": "One entry per selected package.",
+      "items": { "$ref": "#/$defs/PackageReport" }
+    },
+    "summary": { "$ref": "#/$defs/Summary" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "PackageReport": {
+      "type": "object",
+      "description": "Per-package result.",
+      "required": ["name", "version", "manifest_path", "status", "duration_ms", "command"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Cargo package name."
+        },
+        "version": {
+          "type": "string",
+          "description": "Cargo package version."
+        },
+        "manifest_path": {
+          "type": "string",
+          "description": "Path to the package's Cargo.toml."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["passed", "failed", "skipped"],
+          "description": "Status classification."
+        },
+        "skip_reason": {
+          "type": ["string", "null"],
+          "description": "Why this package was skipped (when status is skipped)."
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How long the package check took (milliseconds)."
+        },
+        "command": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Command executed by the engine (argv form)."
+        },
+        "engine": {
+          "anyOf": [
+            { "$ref": "#/$defs/SemverCheckOutput" },
+            { "type": "null" }
+          ],
+          "description": "Captured engine output (when executed)."
+        },
+        "inferred_required_bump": {
+          "type": ["string", "null"],
+          "enum": ["patch", "minor", "major", "unknown", null],
+          "description": "Best-effort required bump inference."
+        },
+        "failure_kind": {
+          "type": ["string", "null"],
+          "enum": ["semver-violation", "tool-error", "baseline-error", "unknown", null],
+          "description": "Failure classification (for failed packages)."
+        },
+        "baseline_error": {
+          "anyOf": [
+            { "$ref": "#/$defs/BaselineErrorCause" },
+            { "type": "null" }
+          ],
+          "description": "Detailed baseline error cause (when failure_kind is baseline-error)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "BaselineErrorCause": {
+      "type": "object",
+      "description": "Detailed baseline error causes.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["revision-not-found"],
+          "properties": {
+            "revision-not-found": {
+              "type": "object",
+              "required": ["rev"],
+              "properties": {
+                "rev": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["crate-absent-from-baseline"],
+          "properties": {
+            "crate-absent-from-baseline": {
+              "type": "object",
+              "required": ["crate_name"],
+              "properties": {
+                "crate_name": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["shallow-clone"],
+          "properties": {
+            "shallow-clone": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": ["string", "null"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["merge-base-not-found"],
+          "properties": {
+            "merge-base-not-found": {
+              "type": "object",
+              "required": ["base", "head"],
+              "properties": {
+                "base": { "type": "string" },
+                "head": { "type": "string" }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["rustdoc-generation-failed"],
+          "properties": {
+            "rustdoc-generation-failed": {
+              "type": "object",
+              "properties": {
+                "detail": { "type": ["string", "null"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["not-published"],
+          "properties": {
+            "not-published": {
+              "type": "object",
+              "required": ["crate_name"],
+              "properties": {
+                "crate_name": { "type": "string" },
+                "version": { "type": ["string", "null"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["other"],
+          "properties": {
+            "other": {
+              "type": "object",
+              "required": ["message"],
+              "properties": {
+                "message": { "type": "string" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "SemverCheckOutput": {
+      "type": "object",
+      "description": "Output from running a SemVer check.",
+      "required": ["success", "stdout", "stderr"],
+      "properties": {
+        "exit_code": {
+          "type": ["integer", "null"],
+          "description": "Exit code from the process."
+        },
+        "success": {
+          "type": "boolean",
+          "description": "True if the process exited successfully."
+        },
+        "stdout": {
+          "type": "string",
+          "description": "Captured stdout."
+        },
+        "stderr": {
+          "type": "string",
+          "description": "Captured stderr."
+        },
+        "required_bump": {
+          "type": ["string", "null"],
+          "enum": ["patch", "minor", "major", "unknown", null],
+          "description": "Best-effort required bump inference from output."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Summary": {
+      "type": "object",
+      "description": "Summary of a run.",
+      "required": ["total", "passed", "failed", "skipped"],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of package entries in the report (including skipped)."
+        },
+        "passed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of packages that passed."
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of packages that failed."
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of packages that were skipped."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

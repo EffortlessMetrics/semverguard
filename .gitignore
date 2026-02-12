@@ -5,3 +5,9 @@
 .vscode
 *.swp
 *.tmp
+
+# mdbook output
+docs/book/
+fuzz/target
+fuzz/corpus
+fuzz/artifacts

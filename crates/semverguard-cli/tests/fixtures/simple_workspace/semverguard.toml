@@ -1,0 +1,13 @@
+# Simple test configuration for semverguard
+
+[baseline]
+kind = "crates-io"
+
+[scope]
+mode = "workspace"
+skip_publish_false = true
+skip_no_lib = true
+
+[output]
+format = "text"
+pretty_json = true

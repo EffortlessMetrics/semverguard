@@ -1,0 +1,177 @@
+{
+  "schema": "sensor.report.v1",
+  "tool": {
+    "name": "semverguard",
+    "version": "0.1.0",
+    "repository_url": "https://github.com/EffortlessMetrics/semverguard"
+  },
+  "run": {
+    "started_at": "2024-01-15T10:00:00Z",
+    "finished_at": "2024-01-15T10:01:30Z",
+    "duration_ms": 90000,
+    "workspace_root": "workspace",
+    "baseline": {
+      "kind": "crates-io",
+      "version": null,
+      "rev": null,
+      "root": null,
+      "rustdoc": null,
+      "on_error": {
+        "new_crate": "warn",
+        "missing_revision": "fail",
+        "shallow_clone": "fail",
+        "rustdoc_failure": "fail",
+        "not_published": "warn"
+      }
+    }
+  },
+  "verdict": {
+    "status": "fail",
+    "reasons": [
+      "semver_violation",
+      "baseline_unavailable"
+    ]
+  },
+  "findings": [
+    {
+      "check_id": "semver",
+      "code": "violation",
+      "level": "error",
+      "message": "Package `alpha` (v1.0.0) requires a major version bump",
+      "location": {
+        "path": "manifest-alpha.toml",
+        "raw_log": "artifacts/semverguard/raw/alpha-1.0.0.stderr.log"
+      },
+      "data": {
+        "failure_kind": "semver-violation",
+        "manifest_path": "manifest-alpha.toml",
+        "package": "alpha",
+        "required_bump": "major",
+        "suggested_version": "2.0.0",
+        "version": "1.0.0"
+      },
+      "fingerprint": "d168f6b47520325f9be045d09b02b05e47f7ad212853431c50711c420d3e9635"
+    },
+    {
+      "check_id": "baseline",
+      "code": "missing",
+      "level": "warning",
+      "message": "Baseline error for `beta` (v0.2.0): baseline not found",
+      "location": {
+        "path": "manifest-beta.toml",
+        "raw_log": "artifacts/semverguard/raw/beta-0.2.0.stderr.log"
+      },
+      "data": {
+        "failure_kind": "baseline-error",
+        "manifest_path": "manifest-beta.toml",
+        "package": "beta",
+        "required_bump": null,
+        "version": "0.2.0"
+      },
+      "fingerprint": "55c6c63ec662ae3c54cafae7d58ad3ed08e5a41be73abc97e54bf6c028945674"
+    }
+  ],
+  "data": {
+    "report": {
+      "semverguard_version": "0.1.0",
+      "started_at": "2024-01-15T10:00:00Z",
+      "finished_at": "2024-01-15T10:01:30Z",
+      "workspace_root": "workspace",
+      "packages": [
+        {
+          "name": "alpha",
+          "version": "1.0.0",
+          "manifest_path": "manifest-alpha.toml",
+          "status": "failed",
+          "skip_reason": null,
+          "duration_ms": 1200,
+          "command": [
+            "cargo",
+            "semver-checks",
+            "check-release",
+            "-p",
+            "alpha"
+          ],
+          "engine": {
+            "exit_code": 1,
+            "success": false,
+            "stdout": "Checking alpha v1.0.0",
+            "stderr": "breaking change detected",
+            "required_bump": "major"
+          },
+          "inferred_required_bump": "major",
+          "failure_kind": "semver-violation"
+        },
+        {
+          "name": "beta",
+          "version": "0.2.0",
+          "manifest_path": "manifest-beta.toml",
+          "status": "failed",
+          "skip_reason": null,
+          "duration_ms": 800,
+          "command": [
+            "cargo",
+            "semver-checks",
+            "check-release",
+            "-p",
+            "beta"
+          ],
+          "engine": {
+            "exit_code": 2,
+            "success": false,
+            "stdout": "",
+            "stderr": "baseline not found",
+            "required_bump": null
+          },
+          "inferred_required_bump": null,
+          "failure_kind": "baseline-error"
+        },
+        {
+          "name": "gamma",
+          "version": "0.3.0",
+          "manifest_path": "manifest-gamma.toml",
+          "status": "skipped",
+          "skip_reason": "publish = false",
+          "duration_ms": 0,
+          "command": [],
+          "engine": null,
+          "inferred_required_bump": null
+        }
+      ],
+      "summary": {
+        "total": 3,
+        "passed": 0,
+        "failed": 2,
+        "skipped": 1
+      }
+    },
+    "summary": {
+      "packages_total": 3,
+      "packages_checked": 2,
+      "packages_skipped": 1,
+      "violations": 1,
+      "baseline_issues": 1,
+      "max_required_bump": "major",
+      "baseline_kind": "crates-io"
+    }
+  },
+  "artifacts": {
+    "report_json": "artifacts/semverguard/report.json",
+    "comment_md": "artifacts/semverguard/comment.md",
+    "sarif_json": "artifacts/semverguard/sarif.json",
+    "raw_logs": [
+      {
+        "package": "alpha",
+        "version": "1.0.0",
+        "stdout": "artifacts/semverguard/raw/alpha-1.0.0.stdout.log",
+        "stderr": "artifacts/semverguard/raw/alpha-1.0.0.stderr.log"
+      },
+      {
+        "package": "beta",
+        "version": "0.2.0",
+        "stdout": "artifacts/semverguard/raw/beta-0.2.0.stdout.log",
+        "stderr": "artifacts/semverguard/raw/beta-0.2.0.stderr.log"
+      }
+    ]
+  }
+}

@@ -4,7 +4,7 @@
 
 - run checks across a workspace (optionally only for changed crates)
 - keep the flags/config in one place (`semverguard.toml`)
-- emit a machine-readable JSON report for CI artifacts
+- emit machine-readable JSON, SARIF, or receipt bundles for CI artifacts
 - exit non‑zero when a crate fails SemVer policy (so CI can gate PRs)
 
 This repository is a Rust workspace with multiple crates:
@@ -34,6 +34,33 @@ To only check crates changed relative to a git revision:
 ```bash
 cargo run -p semverguard-cli -- check --baseline-rev origin/main --changed
 ```
+
+Preview which packages would be checked:
+
+```bash
+cargo run -p semverguard-cli -- list
+```
+
+Generate SARIF output for GitHub Code Scanning:
+
+```bash
+cargo run -p semverguard-cli -- check --sarif results.sarif
+```
+
+## Installation
+
+### From crates.io
+
+```bash
+cargo install cargo-semver-checks
+cargo install semverguard-cli
+```
+
+### From GitHub Releases
+
+Prebuilt binaries for Linux (x86_64, ARM64), macOS (Intel, Apple Silicon), and Windows are available on the [Releases](https://github.com/EffortlessMetrics/semverguard/releases) page. Each archive includes a `.sha256` checksum file.
+
+For the full installation guide including version pinning, see [Installation & Pinning](docs/src/how-to/install.md).
 
 ## Configuration
 
@@ -76,21 +103,82 @@ extra_args = []
 fail_fast = false
 
 [output]
-# format = "text" | "json" | "both"
+# format = "text" | "json" | "both" | "sarif" | "receipt"
 format = "both"
 json_path = "semverguard-report.json"
 pretty_json = true
+artifacts_dir = "artifacts/semverguard"
+warn_as_fail = false
 ```
 
 ## Exit codes
 
-- `0` — all checked crates passed (or were skipped by policy)
-- `1` — at least one crate failed SemVer policy
-- `2` — configuration / invocation error
+- `0` — pass (or warn when warn-as-fail is disabled)
+- `1` — tool/runtime error
+- `2` — semver policy failure
+- `3` — warn-as-fail
 
 ## CI integration
 
-GitHub Actions sketch:
+### GitHub Action (recommended)
+
+The easiest way to integrate semverguard into your CI is with the official GitHub Action.
+Copy this workflow to `.github/workflows/semver.yml`:
+
+```yaml
+name: SemVer Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  semver:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write  # Optional: for SARIF upload
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for git baseline
+
+      - uses: EffortlessMetrics/semverguard/.github/actions/semverguard@main
+        with:
+          mode: pr
+          baseline-rev: origin/main
+          json-path: semverguard-report.json
+          sarif-path: semverguard.sarif
+          upload-sarif: "true"
+          cargo-semver-checks-version: "0.35.0"  # Pinned for MSRV stability
+```
+
+### Action inputs
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `mode` | `pr` | `pr` (tolerant), `release` (strict), or `cockpit` (receipt-driven, exit 0) |
+| `baseline-rev` | `origin/main` | Git revision to compare against |
+| `changed` | `true` | Only check packages changed relative to baseline |
+| `json-path` | `semverguard-report.json` | Path for JSON report output |
+| `sarif-path` | (none) | Path for SARIF report (enables GitHub Code Scanning) |
+| `upload-sarif` | `false` | Upload SARIF to GitHub Code Scanning |
+| `cargo-semver-checks-version` | `0.35.0` | Pinned version for MSRV drift protection |
+| `semverguard-version` | `source` | `source` builds from repo; or specify crates.io version |
+| `extra-args` | (none) | Additional arguments for semverguard check |
+
+### Action outputs
+
+| Output | Description |
+|--------|-------------|
+| `exit-code` | `0`=pass, `1`=tool error, `2`=semver failure, `3`=warn-as-fail |
+| `json-report` | Path to generated JSON report |
+| `sarif-report` | Path to generated SARIF report (if enabled) |
+| `summary` | Brief summary: `total=N passed=N failed=N skipped=N` |
+
+### Manual setup
+
+If you prefer manual control, here's a full workflow:
 
 ```yaml
 - uses: actions/checkout@v4
@@ -100,7 +188,7 @@ GitHub Actions sketch:
 - uses: dtolnay/rust-toolchain@stable
 
 - name: Install cargo-semver-checks
-  run: cargo install cargo-semver-checks --locked
+  run: cargo install cargo-semver-checks --version 0.35.0 --locked
 
 - name: Run semverguard
   run: cargo run -p semverguard-cli -- check --baseline-rev origin/main --changed --json semverguard-report.json
@@ -111,7 +199,27 @@ GitHub Actions sketch:
   with:
     name: semverguard-report
     path: semverguard-report.json
+
+# Optional: Upload SARIF for GitHub Code Scanning
+- name: Run semverguard (SARIF)
+  run: cargo run -p semverguard-cli -- check --baseline-rev origin/main --changed --sarif results.sarif
+
+- name: Upload SARIF
+  if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: results.sarif
 ```
+
+### Cockpit integration
+
+For receipt-driven CI orchestration, use `mode: cockpit`. In this mode semverguard always exits 0 and emits a receipt bundle (`sensor.report.v1`). A separate director process reads the receipt and makes the pass/fail decision. See [Cockpit Integration](docs/src/how-to/cockpit-integration.md) for configuration examples and lane policy details.
+
+### Version pinning
+
+The action pins `cargo-semver-checks` to a specific version (`0.35.0` by default) to prevent
+MSRV drift issues. When upstream releases a new version that bumps MSRV, you can update
+the version after verifying compatibility with your project's Rust version.
 
 ## Notes
 

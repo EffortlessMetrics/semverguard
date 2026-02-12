@@ -1,0 +1,23 @@
+{
+  "workspace_root": "/workspace",
+  "would_check": [
+    {
+      "name": "lib-a",
+      "version": "1.0.0",
+      "manifest_path": "/workspace/crates/lib-a/Cargo.toml"
+    },
+    {
+      "name": "lib-b",
+      "version": "2.0.0",
+      "manifest_path": "/workspace/crates/lib-b/Cargo.toml"
+    }
+  ],
+  "would_skip": [
+    {
+      "name": "internal-lib",
+      "version": "0.1.0",
+      "manifest_path": "/workspace/crates/internal-lib/Cargo.toml",
+      "reason": "publish = false"
+    }
+  ]
+}
