@@ -34,9 +34,10 @@ CLI arguments override config file values:
 
 ## Exit Codes
 
-- `0` - All checks passed
-- `1` - SemVer failures detected (CI gating signal)
-- `2` - Configuration or runtime error
+- `0` - All checks passed (or baseline warnings in PR mode)
+- `1` - Tool/runtime error (engine missing, etc.)
+- `2` - SemVer failures detected (policy violation)
+- `3` - Baseline error (e.g., rev not found in Release mode)
 
 ## Dependencies
 

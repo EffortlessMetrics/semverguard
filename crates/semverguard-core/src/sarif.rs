@@ -701,11 +701,11 @@ pub fn sarif_to_json(log: &SarifLog, pretty: bool) -> serde_json::Result<String>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use semverguard_types::{
         FailureKind, Finding, FindingLevel, FindingLocation, PackageStatus, SemverCheckOutput,
         Summary,
     };
+    use serde_json::json;
     use std::path::PathBuf;
 
     fn sample_report() -> RunReport {
@@ -930,7 +930,12 @@ mod tests {
 
         for result in &sarif.runs[0].results {
             for loc in &result.locations {
-                assert!(loc.physical_location.artifact_location.uri.contains("Cargo.toml"));
+                assert!(
+                    loc.physical_location
+                        .artifact_location
+                        .uri
+                        .contains("Cargo.toml")
+                );
             }
         }
     }

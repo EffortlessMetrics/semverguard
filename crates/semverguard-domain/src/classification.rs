@@ -322,9 +322,12 @@ mod tests {
     #[test]
     fn test_detect_baseline_error_generic_other() {
         let cause = detect_baseline_error_from_message("baseline failed for unknown reason", None);
-        assert_baseline_cause_variant(&cause, BaselineErrorCause::Other {
-            message: String::new(),
-        });
+        assert_baseline_cause_variant(
+            &cause,
+            BaselineErrorCause::Other {
+                message: String::new(),
+            },
+        );
     }
 
     #[test]
@@ -332,16 +335,13 @@ mod tests {
         let cause = detect_baseline_error_from_message("revision not found in baseline", None);
         assert_baseline_cause_variant(
             &cause,
-            BaselineErrorCause::RevisionNotFound {
-                rev: String::new(),
-            },
+            BaselineErrorCause::RevisionNotFound { rev: String::new() },
         );
     }
 
     #[test]
     fn test_detect_baseline_error_crate_absent_without_name() {
-        let cause =
-            detect_baseline_error_from_message("crate missing in baseline", None);
+        let cause = detect_baseline_error_from_message("crate missing in baseline", None);
         assert_eq!(
             cause,
             Some(BaselineErrorCause::CrateAbsentFromBaseline {
@@ -352,8 +352,7 @@ mod tests {
 
     #[test]
     fn test_detect_baseline_error_rustdoc_error_only() {
-        let cause =
-            detect_baseline_error_from_message("baseline rustdoc error output", None);
+        let cause = detect_baseline_error_from_message("baseline rustdoc error output", None);
         assert_baseline_cause_variant(
             &cause,
             BaselineErrorCause::RustdocGenerationFailed { detail: None },
@@ -362,8 +361,7 @@ mod tests {
 
     #[test]
     fn test_detect_baseline_error_not_published_without_name() {
-        let cause =
-            detect_baseline_error_from_message("crate not published to crates.io", None);
+        let cause = detect_baseline_error_from_message("crate not published to crates.io", None);
         assert_eq!(
             cause,
             Some(BaselineErrorCause::NotPublished {
@@ -555,9 +553,12 @@ mod tests {
         );
         let result = classify_output_detailed(&out, None);
         assert_eq!(result.kind, FailureKind::BaselineError);
-        assert_baseline_cause_variant(&result.baseline_cause, BaselineErrorCause::Other {
-            message: String::new(),
-        });
+        assert_baseline_cause_variant(
+            &result.baseline_cause,
+            BaselineErrorCause::Other {
+                message: String::new(),
+            },
+        );
     }
 
     #[test]

@@ -69,9 +69,10 @@ json_path = "semverguard-report.json"
 
 ## Exit Codes
 
-- `0` - All checked crates passed
-- `1` - At least one crate failed SemVer policy
-- `2` - Configuration or invocation error
+- `0` - All checked crates passed (or baseline errors as warnings in PR mode)
+- `1` - Tool or runtime error (engine missing, config error, etc.)
+- `2` - SemVer policy violation detected
+- `3` - Baseline error (in Release mode) or when `--warn-as-fail` is enabled
 
 ## License
 

@@ -216,8 +216,7 @@ impl std::fmt::Display for BaselineErrorCause {
                 crate_name,
                 version,
             } => {
-                let mut msg =
-                    format!("crate '{}' not published to crates.io", crate_name);
+                let mut msg = format!("crate '{}' not published to crates.io", crate_name);
                 if let Some(v) = version {
                     msg.push_str(" (version ");
                     msg.push_str(v);
@@ -247,8 +246,7 @@ impl BaselineErrorCause {
     /// For example, shallow clone issues can be fixed by fetching more history.
     pub fn is_ci_recoverable(&self) -> bool {
         let discriminant = std::mem::discriminant(self);
-        discriminant
-            == std::mem::discriminant(&Self::ShallowClone { detail: None })
+        discriminant == std::mem::discriminant(&Self::ShallowClone { detail: None })
             || discriminant
                 == std::mem::discriminant(&Self::MergeBaseNotFound {
                     base: String::new(),

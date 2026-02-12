@@ -673,7 +673,10 @@ mod tests {
     #[test]
     fn test_run_mode_suggested_scope_mode() {
         assert_eq!(RunMode::Pr.suggested_scope_mode(), ScopeMode::Changed);
-        assert_eq!(RunMode::Release.suggested_scope_mode(), ScopeMode::Workspace);
+        assert_eq!(
+            RunMode::Release.suggested_scope_mode(),
+            ScopeMode::Workspace
+        );
         assert_eq!(RunMode::Cockpit.suggested_scope_mode(), ScopeMode::Changed);
     }
 

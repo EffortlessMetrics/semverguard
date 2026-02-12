@@ -57,13 +57,13 @@ let git = MyGitProvider::new();
 let engine = MyEngine::new();
 
 // Create runner
-let runner = SemverguardRunner::new(&workspace, Some(&git), &engine, &config);
+let runner = SemverguardRunner::new(&workspace, Some(&git), &engine);
 
 // Run checks
-let artifacts = runner.run()?;
+let artifacts = runner.run(workspace_root, &config)?;
 
 // Or preview without running
-let list_result = runner.list_packages()?;
+let list_result = runner.list_packages(workspace_root, &config)?;
 ```
 
 ## Features

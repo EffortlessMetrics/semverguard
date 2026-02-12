@@ -1742,14 +1742,18 @@ kind = "crates-io"
 
         let result = validate_config(&cfg);
 
-        assert!(result
-            .errors
-            .iter()
-            .any(|e| e.contains("baseline.root is not a directory")));
-        assert!(result
-            .errors
-            .iter()
-            .any(|e| e.contains("baseline.rustdoc is not a file")));
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("baseline.root is not a directory"))
+        );
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("baseline.rustdoc is not a file"))
+        );
         assert!(result.warnings.is_empty());
     }
 

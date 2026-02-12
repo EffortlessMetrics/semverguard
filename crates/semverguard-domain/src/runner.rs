@@ -313,42 +313,102 @@ impl<'a> SemverguardRunner<'a> {
         config: &semverguard_types::SemverguardConfig,
     ) -> Result<ListResult> {
         let metadata = self.workspace.load(workspace_root)?;
-        let include_set = build_globset(&config.scope.include)?;
-        let exclude_set = build_globset(&config.scope.exclude)?;
 
         let mut would_skip: Vec<SkippedPackage> = Vec::new();
 
         // First pass: apply static filters (publishability, has-lib, name patterns).
+        // If explicit_packages is non-empty, it takes precedence over include/exclude globs.
         let mut eligible: Vec<WorkspacePackage> = Vec::new();
-        for pkg in &metadata.packages {
-            if !matches_name_filters(pkg, &include_set, &exclude_set) {
-                would_skip.push(SkippedPackage {
-                    name: pkg.name.clone(),
-                    version: pkg.version.to_string(),
-                    manifest_path: pkg.manifest_path.clone(),
-                    reason: "filtered by include/exclude".to_string(),
-                });
-                continue;
+
+        if !config.scope.explicit_packages.is_empty() {
+            // Explicit package selection mode
+            let requested: HashSet<&str> = config
+                .scope
+                .explicit_packages
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
+            let available: HashSet<&str> =
+                metadata.packages.iter().map(|p| p.name.as_str()).collect();
+
+            // Check for packages that don't exist in the workspace
+            let mut missing: Vec<&str> = Vec::new();
+            for name in &requested {
+                if !available.contains(name) {
+                    missing.push(name);
+                }
             }
-            if config.scope.skip_publish_false && !pkg.publishable {
-                would_skip.push(SkippedPackage {
-                    name: pkg.name.clone(),
-                    version: pkg.version.to_string(),
-                    manifest_path: pkg.manifest_path.clone(),
-                    reason: "publish = false".to_string(),
-                });
-                continue;
+
+            // Error if ALL specified packages are missing
+            if missing.len() == requested.len() {
+                return Err(SemverguardError::InvalidConfig(format!(
+                    "none of the specified packages exist in workspace: {:?}",
+                    config.scope.explicit_packages
+                )));
             }
-            if config.scope.skip_no_lib && !pkg.has_lib {
-                would_skip.push(SkippedPackage {
-                    name: pkg.name.clone(),
-                    version: pkg.version.to_string(),
-                    manifest_path: pkg.manifest_path.clone(),
-                    reason: "no library target".to_string(),
-                });
-                continue;
+
+            for pkg in &metadata.packages {
+                if !requested.contains(pkg.name.as_str()) {
+                    // Not explicitly requested; skip silently (don't add to skip list for consistency with run)
+                    continue;
+                }
+
+                // Still apply publishability and has-lib filters unless forced
+                if config.scope.skip_publish_false && !pkg.publishable {
+                    would_skip.push(SkippedPackage {
+                        name: pkg.name.clone(),
+                        version: pkg.version.to_string(),
+                        manifest_path: pkg.manifest_path.clone(),
+                        reason: "publish = false".to_string(),
+                    });
+                    continue;
+                }
+                if config.scope.skip_no_lib && !pkg.has_lib {
+                    would_skip.push(SkippedPackage {
+                        name: pkg.name.clone(),
+                        version: pkg.version.to_string(),
+                        manifest_path: pkg.manifest_path.clone(),
+                        reason: "no library target".to_string(),
+                    });
+                    continue;
+                }
+                eligible.push(pkg.clone());
             }
-            eligible.push(pkg.clone());
+        } else {
+            // Standard glob-based filtering
+            let include_set = build_globset(&config.scope.include)?;
+            let exclude_set = build_globset(&config.scope.exclude)?;
+
+            for pkg in &metadata.packages {
+                if !matches_name_filters(pkg, &include_set, &exclude_set) {
+                    would_skip.push(SkippedPackage {
+                        name: pkg.name.clone(),
+                        version: pkg.version.to_string(),
+                        manifest_path: pkg.manifest_path.clone(),
+                        reason: "filtered by include/exclude".to_string(),
+                    });
+                    continue;
+                }
+                if config.scope.skip_publish_false && !pkg.publishable {
+                    would_skip.push(SkippedPackage {
+                        name: pkg.name.clone(),
+                        version: pkg.version.to_string(),
+                        manifest_path: pkg.manifest_path.clone(),
+                        reason: "publish = false".to_string(),
+                    });
+                    continue;
+                }
+                if config.scope.skip_no_lib && !pkg.has_lib {
+                    would_skip.push(SkippedPackage {
+                        name: pkg.name.clone(),
+                        version: pkg.version.to_string(),
+                        manifest_path: pkg.manifest_path.clone(),
+                        reason: "no library target".to_string(),
+                    });
+                    continue;
+                }
+                eligible.push(pkg.clone());
+            }
         }
 
         // Second pass: scope selection (changed vs workspace).
@@ -2499,15 +2559,13 @@ mod tests {
         let _ = runner.run(Path::new("/workspace"), &config).unwrap();
 
         let events = events.lock().unwrap();
-        assert!(
-            events.iter().any(|e| {
-                if let ProgressEvent::Finished { .. } = e {
-                    true
-                } else {
-                    false
-                }
-            })
-        );
+        assert!(events.iter().any(|e| {
+            if let ProgressEvent::Finished { .. } = e {
+                true
+            } else {
+                false
+            }
+        }));
     }
 
     #[test]
@@ -2533,15 +2591,13 @@ mod tests {
         let _ = runner.run(Path::new("/workspace"), &config).unwrap();
 
         let events = events.lock().unwrap();
-        assert!(
-            events.iter().any(|e| {
-                if let ProgressEvent::PackageStarted { .. } = e {
-                    true
-                } else {
-                    false
-                }
-            })
-        );
+        assert!(events.iter().any(|e| {
+            if let ProgressEvent::PackageStarted { .. } = e {
+                true
+            } else {
+                false
+            }
+        }));
     }
 
     #[test]
@@ -2654,7 +2710,13 @@ mod tests {
 
     #[test]
     fn test_list_packages_invalid_exclude_glob_returns_error() {
-        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let packages = vec![make_package(
+            "pkg-a",
+            "1.0.0",
+            "/workspace/pkg-a",
+            true,
+            true,
+        )];
         let metadata = make_workspace_metadata(packages);
         let workspace = MockWorkspaceProvider::new(metadata);
         let engine = MockSemverEngine::new(vec![]);
@@ -2698,7 +2760,13 @@ mod tests {
 
     #[test]
     fn test_list_packages_changed_mode_git_error_propagates() {
-        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let packages = vec![make_package(
+            "pkg-a",
+            "1.0.0",
+            "/workspace/pkg-a",
+            true,
+            true,
+        )];
         let metadata = make_workspace_metadata(packages);
         let workspace = MockWorkspaceProvider::new(metadata);
         let git = FailingGitProvider {
@@ -2868,7 +2936,13 @@ mod tests {
 
     #[test]
     fn test_run_invalid_exclude_glob_returns_error() {
-        let packages = vec![make_package("pkg-a", "1.0.0", "/workspace/pkg-a", true, true)];
+        let packages = vec![make_package(
+            "pkg-a",
+            "1.0.0",
+            "/workspace/pkg-a",
+            true,
+            true,
+        )];
         let metadata = make_workspace_metadata(packages);
         let workspace = MockWorkspaceProvider::new(metadata);
         let engine = MockSemverEngine::new(vec![]);

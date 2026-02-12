@@ -39,11 +39,11 @@ impl WorkspaceProvider for CargoMetadataWorkspace {
                 continue;
             }
 
-        let manifest_path = PathBuf::from(pkg.manifest_path.as_std_path());
-        let package_root = manifest_path
-            .parent()
-            .expect("manifest path should have parent")
-            .to_path_buf();
+            let manifest_path = PathBuf::from(pkg.manifest_path.as_std_path());
+            let package_root = manifest_path
+                .parent()
+                .expect("manifest path should have parent")
+                .to_path_buf();
 
             // In cargo metadata:
             // - publish = false -> publish = Some([]) (empty list)

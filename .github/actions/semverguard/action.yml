@@ -123,25 +123,31 @@ runs:
       run: |
         set +e  # Don't exit on error - we need to capture exit code
 
-        # Build command arguments
-        ARGS="check"
+        # Build command arguments as an array to handle spaces correctly
+        declare -a ARGS
+        ARGS+=("check")
 
         # Pass --mode to CLI
         MODE="${{ inputs.mode }}"
         if [ -n "$MODE" ] && [ "$MODE" != "auto" ]; then
-          ARGS="$ARGS --mode $MODE"
+          ARGS+=("--mode" "$MODE")
         fi
 
         # --changed flag
         CHANGED="${{ inputs.changed }}"
-        BASELINE_REV="${{ inputs.baseline-rev }}"
-
         if [ "$CHANGED" = "true" ]; then
-          ARGS="$ARGS --changed"
+          ARGS+=("--changed")
         fi
 
+        # --baseline-rev
+        BASELINE_REV="${{ inputs.baseline-rev }}"
         if [ -n "$BASELINE_REV" ]; then
-          ARGS="$ARGS --baseline-rev $BASELINE_REV"
+          ARGS+=("--baseline-rev" "$BASELINE_REV")
+        fi
+
+        # --warn-as-fail
+        if [ "${{ inputs.fail-on-warning }}" = "true" ]; then
+          ARGS+=("--warn-as-fail")
         fi
 
         # Output paths
@@ -149,24 +155,26 @@ runs:
         SARIF_PATH="${{ inputs.sarif-path }}"
 
         if [ -n "$JSON_PATH" ]; then
-          ARGS="$ARGS --json $JSON_PATH"
+          ARGS+=("--json" "$JSON_PATH")
         fi
 
         if [ -n "$SARIF_PATH" ]; then
-          ARGS="$ARGS --sarif $SARIF_PATH"
-        fi
-
-        # Extra arguments
-        EXTRA="${{ inputs.extra-args }}"
-        if [ -n "$EXTRA" ]; then
-          ARGS="$ARGS $EXTRA"
+          ARGS+=("--sarif" "$SARIF_PATH")
         fi
 
         # Progress disabled in CI for cleaner logs
-        ARGS="$ARGS --progress never"
+        ARGS+=("--progress" "never")
 
-        echo "Running: $SEMVERGUARD_BIN $ARGS"
-        $SEMVERGUARD_BIN $ARGS
+        # Handle extra arguments (if any)
+        # Note: If extra-args contains multiple flags, this naive append might 
+        # still be tricky, but it is better than eval.
+        if [ -n "${{ inputs.extra-args }}" ]; then
+          read -ra EXTRA <<< "${{ inputs.extra-args }}"
+          ARGS+=("${EXTRA[@]}")
+        fi
+
+        echo "Running: $SEMVERGUARD_BIN ${ARGS[*]}"
+        "$SEMVERGUARD_BIN" "${ARGS[@]}"
         EXIT_CODE=$?
 
         # Set outputs

@@ -13,13 +13,16 @@ use std::process::Command;
 ///
 /// This function handles:
 /// - Empty output (returns empty vec)
-/// - Lines with leading/trailing whitespace
 /// - Blank lines in the middle of output
+/// - Windows line endings (\r\n)
+///
+/// It does NOT trim leading/trailing whitespace from lines, as those could
+/// be significant in a filename.
 pub fn parse_diff_output(output: &str) -> Vec<PathBuf> {
     output
         .lines()
-        .map(|line| line.trim())
-        .filter(|s| !s.is_empty())
+        .map(|line| line.trim_end_matches('\r'))
+        .filter(|s| !s.trim().is_empty())
         .map(PathBuf::from)
         .collect()
 }
@@ -197,13 +200,20 @@ mod tests {
         }
 
         #[test]
-        fn trims_leading_and_trailing_whitespace() {
+        fn does_not_trim_leading_and_trailing_whitespace() {
             let input = "  src/lib.rs  \n  Cargo.toml\t\n";
             let result = parse_diff_output(input);
             assert_eq!(
                 result,
-                vec![PathBuf::from("src/lib.rs"), PathBuf::from("Cargo.toml"),]
+                vec![PathBuf::from("  src/lib.rs  "), PathBuf::from("  Cargo.toml\t"),]
             );
+        }
+
+        #[test]
+        fn handles_filenames_with_significant_spaces() {
+            let input = " file_with_space.rs\n";
+            let result = parse_diff_output(input);
+            assert_eq!(result, vec![PathBuf::from(" file_with_space.rs")]);
         }
 
         #[test]

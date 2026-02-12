@@ -16,7 +16,7 @@ use semverguard_types::SensorReportV1;
 
 /// Reserved artifact directory segments that are filtered out.
 /// These represent director output and actuator artifacts, not sensor evidence.
-const RESERVED_SEGMENTS: &[&str] = &["artifacts/buildfix/", "artifacts/cockpit/"];
+const RESERVED_SEGMENTS: &[&str] = &["artifacts/buildfix", "artifacts/cockpit"];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -56,11 +56,13 @@ fn normalize_path(path: &str) -> String {
 /// Returns true if the normalized path matches a reserved artifact directory.
 fn is_reserved(normalized: &str) -> bool {
     for segment in RESERVED_SEGMENTS {
-        // Catches both:
-        //   - relative: "artifacts/buildfix/report.json"
-        //   - absolute: "/repo/artifacts/buildfix/report.json"
-        //   - prefixed: "./artifacts/buildfix/report.json"
-        if normalized.contains(segment) || normalized.starts_with(segment) {
+        // Matches segment as a directory component:
+        // - "artifacts/buildfix/report.json" (starts_with)
+        // - "/repo/artifacts/buildfix/report.json" (contains with leading slash)
+        // - "./artifacts/buildfix/report.json" (contains with leading slash)
+        let with_slash = format!("{segment}/");
+        let after_slash = format!("/{segment}/");
+        if normalized.starts_with(&with_slash) || normalized.contains(&after_slash) {
             return true;
         }
     }

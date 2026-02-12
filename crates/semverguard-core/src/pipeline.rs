@@ -819,8 +819,10 @@ mod tests {
         };
 
         let result = run_with_adapters(&options, &workspace, None, &engine).unwrap();
-        let artifacts_root =
-            crate::receipt::resolve_artifacts_dir(&options.workspace_root, &options.config.output.artifacts_dir);
+        let artifacts_root = crate::receipt::resolve_artifacts_dir(
+            &options.workspace_root,
+            &options.config.output.artifacts_dir,
+        );
         fs::write(&artifacts_root, "not a dir").unwrap();
 
         let err = write_pipeline_receipt(&result, &options).unwrap_err();

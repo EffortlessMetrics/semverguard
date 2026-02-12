@@ -1,6 +1,6 @@
-[**text**](CLAUDE.md)# CLAUDE.md
+Agents.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to codex when working with code in this repository.
 
 ## Project Overview
 
