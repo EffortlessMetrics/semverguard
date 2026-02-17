@@ -1,46 +1,37 @@
 # semverguard-git
 
-Git adapter for semverguard - detects changed files via the git CLI.
+`semverguard-git` is the git-backed adapter for semverguard.
 
-## Overview
-
-This crate implements the `GitProvider` trait from `semverguard-domain`, enabling semverguard to scope checks to only packages that have changed relative to a baseline revision.
+It implements `GitProvider` and additional helper methods used by core logic for capability
+probing and PR-mode gating.
 
 ## Responsibilities
 
-- Run `git diff --name-only <base>...<head>` (three-dot merge-base syntax)
-- Parse output into file paths
-- Return workspace-relative paths for change detection
+- List changed paths via `git diff --name-only <base>...<head>`
+- Parse diff output into workspace-relative paths
+- Resolve refs and HEAD to commit SHAs
+- Detect shallow clone state
+- Detect manifest `version = "..."` changes for PR-mode gate behavior
 
 ## Usage
 
-This crate is used internally by `semverguard-cli`:
-
 ```rust
 use semverguard_git::GitCli;
-use semverguard_domain::GitProvider;
 use std::path::Path;
 
-let git = GitCli::default();  // Uses "git" from PATH
-let changed = git.changed_paths(
-    Path::new("/workspace"),
-    "origin/main",
-    "HEAD"
-)?;
+let git = GitCli::default();
+let changed = git.changed_paths(Path::new("/workspace"), "origin/main", "HEAD")?;
+let head_sha = git.resolve_head(Path::new("/workspace"))?;
+let has_version_change =
+    git.has_manifest_version_change(Path::new("/workspace"), "origin/main", "HEAD")?;
 ```
 
-## Custom Git Binary
+## Notes
 
-```rust
-use semverguard_git::GitCli;
-
-let git = GitCli::new(Some("/usr/local/bin/git".into()));
-```
-
-## Three-Dot Diff
-
-The three-dot syntax (`base...head`) compares the merge-base of base and head to head, which matches typical PR semantics - showing only files changed in the PR branch, not files changed in the target branch since the PR was created.
+- Changed-path checks use three-dot range syntax (`base...head`) to match typical PR semantics.
+- `GitCli::new(Some(path))` can be used to point at a non-default git binary.
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](../../LICENSE-APACHE) or [MIT license](../../LICENSE-MIT) at your option.
+Licensed under either [Apache License, Version 2.0](../../LICENSE-APACHE) or
+[MIT license](../../LICENSE-MIT).

@@ -1,24 +1,20 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use globset::Glob;
 use semverguard_core::capability::build_capability_context;
 use semverguard_core::exit_code::exit_code_from_report;
+use semverguard_core::pipeline::{self, PipelineOptions};
 use semverguard_core::receipt::{
     CapabilityContext, ToolErrorFinding, build_artifact_index,
     build_receipt_with_capabilities_versioned, exit_code_from_receipt, has_tool_error,
     resolve_artifacts_dir, write_receipt_bundle,
 };
-use semverguard_core::{config, sarif};
-use semverguard_domain::SemverguardRunner;
-use semverguard_engine::CargoSemverChecksEngine;
-use semverguard_git::GitCli;
+use semverguard_core::{config, operations, sarif};
 use semverguard_types::{
     BaselineKind, ListResult, OutputFormat, RunMode, RunReport, ScopeMode, SemverguardConfig,
 };
-use semverguard_workspace::CargoMetadataWorkspace;
 use std::fs;
 use std::path::{Path, PathBuf};
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use std::sync::Arc;
 
 mod progress;
 use progress::{ProgressCallbackAdapter, ProgressChoice, create_progress_reporter};
@@ -318,19 +314,14 @@ fn print_config(cfg: &SemverguardConfig) {
     print!("{out}");
 }
 
-fn apply_cli_overrides(cfg: &mut SemverguardConfig, args: &CheckArgs) {
+fn apply_cli_overrides(
+    cfg: &mut SemverguardConfig,
+    args: &CheckArgs,
+    scope_mode_set_in_config: bool,
+) {
     // Apply mode from CLI (takes precedence over config file)
     if let Some(mode) = &args.mode {
         cfg.mode = mode.clone().into();
-    }
-
-    // Cockpit mode forces receipt format
-    if cfg.mode.is_cockpit() {
-        cfg.output.format = OutputFormat::Receipt;
-    }
-
-    if args.changed {
-        cfg.scope.mode = semverguard_types::ScopeMode::Changed;
     }
 
     if let Some(rev) = &args.baseline_rev {
@@ -340,6 +331,28 @@ fn apply_cli_overrides(cfg: &mut SemverguardConfig, args: &CheckArgs) {
     if let Some(ver) = &args.baseline_version {
         cfg.baseline.kind = semverguard_types::BaselineKind::CratesIo;
         cfg.baseline.version = Some(ver.clone());
+    }
+
+    // Mode-driven scope defaults are only applied when scope.mode is not explicitly
+    // configured in semverguard.toml and no explicit --changed override is present.
+    if !scope_mode_set_in_config && !args.changed {
+        let suggested = cfg.mode.suggested_scope_mode();
+        if suggested == ScopeMode::Changed {
+            if cfg.baseline.kind == BaselineKind::Git && cfg.baseline.rev.is_some() {
+                cfg.scope.mode = ScopeMode::Changed;
+            }
+        } else {
+            cfg.scope.mode = ScopeMode::Workspace;
+        }
+    }
+
+    if args.changed {
+        cfg.scope.mode = ScopeMode::Changed;
+    }
+
+    // Cockpit mode forces receipt format
+    if cfg.mode.is_cockpit() {
+        cfg.output.format = OutputFormat::Receipt;
     }
 
     if args.fail_fast {
@@ -390,13 +403,14 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
         .config
         .clone()
         .unwrap_or_else(|| PathBuf::from("semverguard.toml"));
+    let scope_mode_set_in_config = config::config_explicitly_sets_scope_mode(&cfg_path);
 
     let cfg_result = config::load_config(&cfg_path);
     let mut cfg = match &cfg_result {
         Ok(cfg) => cfg.clone(),
         Err(_) => SemverguardConfig::default(),
     };
-    apply_cli_overrides(&mut cfg, args);
+    apply_cli_overrides(&mut cfg, args, scope_mode_set_in_config);
 
     let receipt_requested = cfg.output.format == OutputFormat::Receipt;
     let sarif_requested = receipt_requested && args.sarif.is_some();
@@ -424,37 +438,138 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
         );
     }
 
-    // Wire adapters.
-    let workspace = CargoMetadataWorkspace::default();
-    let git = GitCli::default();
-    let engine = CargoSemverChecksEngine::default();
+    let git_probe = operations::probe_git(&args.workspace_root);
 
-    // Probe git capabilities
-    let git_available = git.is_available(&args.workspace_root);
-    let shallow_clone = git.is_shallow(&args.workspace_root).unwrap_or(false);
-    let git_version = git.version(&args.workspace_root);
-
-    // Create progress reporter based on CLI flag
+    // Create progress reporter based on CLI flag.
     let progress_choice: ProgressChoice = args.progress.clone().into();
-    let progress_reporter = create_progress_reporter(progress_choice);
-    let progress_callback = ProgressCallbackAdapter::new(progress_reporter);
-
-    let runner =
-        SemverguardRunner::with_progress(&workspace, Some(&git), &engine, progress_callback);
 
     // Handle --dry-run: show what would be checked without actually running
     if args.dry_run {
-        let list_result = runner.list_packages(&args.workspace_root, &cfg)?;
+        let list_result = operations::list(&operations::ListOptions {
+            workspace_root: args.workspace_root.clone(),
+            config: cfg.clone(),
+        })?;
         print_list_text(&list_result);
         return Ok(0);
     }
 
-    let started = OffsetDateTime::now_utc();
-    let artifacts = match runner.run(&args.workspace_root, &cfg) {
-        Ok(artifacts) => artifacts,
+    let pr_skip_reason = operations::pr_mode_skip_reason(&cfg, &args.workspace_root);
+    if let Some(reason) = pr_skip_reason {
+        let started = time::OffsetDateTime::now_utc();
+        let list_result = match operations::list(&operations::ListOptions {
+            workspace_root: args.workspace_root.clone(),
+            config: cfg.clone(),
+        }) {
+            Ok(list_result) => list_result,
+            Err(e) => {
+                return handle_tool_error(
+                    e,
+                    &cfg,
+                    &args.workspace_root,
+                    &artifacts_root,
+                    receipt_requested,
+                    sarif_requested,
+                );
+            }
+        };
+        eprintln!("warning: {reason}");
+        let finished = time::OffsetDateTime::now_utc();
+        let report = operations::build_pr_mode_skipped_report(
+            list_result,
+            &reason,
+            started,
+            finished,
+            env!("CARGO_PKG_VERSION"),
+        );
+
+        if receipt_requested {
+            let artifact_index = build_artifact_index(
+                &args.workspace_root,
+                &artifacts_root,
+                Some(&report),
+                sarif_requested,
+            );
+
+            // Build capability context using probed git results.
+            let capability_ctx = build_capability_context(
+                &cfg,
+                &report,
+                git_probe.available,
+                git_probe.shallow_clone,
+                git_probe.version.clone(),
+            );
+
+            let receipt = build_receipt_with_capabilities_versioned(
+                Some(&report),
+                &[],
+                &artifact_index,
+                &cfg.baseline,
+                &args.workspace_root,
+                Some(&capability_ctx),
+                None,
+                &cfg.waivers,
+            );
+
+            // In cockpit mode, exit 0 if receipt write succeeds (even with failures).
+            if cfg.mode.is_cockpit() {
+                match write_receipt_bundle(
+                    &artifacts_root,
+                    &receipt,
+                    Some(&report),
+                    sarif_requested,
+                    cfg.output.pretty_json,
+                ) {
+                    Ok(()) => return Ok(0),
+                    Err(e) => {
+                        eprintln!("FATAL: failed to write receipt: {e}");
+                        return Ok(1);
+                    }
+                }
+            }
+
+            let write_result = write_receipt_bundle(
+                &artifacts_root,
+                &receipt,
+                Some(&report),
+                sarif_requested,
+                cfg.output.pretty_json,
+            );
+            write_result?;
+            let code = exit_code_from_receipt(
+                &receipt.verdict,
+                cfg.output.warn_as_fail,
+                has_tool_error(&receipt.findings),
+            );
+            return Ok(code);
+        }
+
+        // Resolve the run mode (auto-detect from environment if needed).
+        let resolved_mode = cfg.mode.resolve();
+        emit_outputs(&cfg, &report)?;
+        return Ok(exit_code_from_report(
+            &report,
+            resolved_mode,
+            cfg.output.warn_as_fail,
+        ));
+    }
+
+    let pipeline_options = PipelineOptions {
+        workspace_root: args.workspace_root.clone(),
+        config: cfg.clone(),
+        sarif: sarif_requested,
+        tool_version: None,
+        progress: Some(
+            Arc::new(ProgressCallbackAdapter::new(create_progress_reporter(
+                progress_choice,
+            ))) as Arc<dyn semverguard_core::ProgressCallback>,
+        ),
+    };
+
+    let pipeline_result = match pipeline::run(&pipeline_options) {
+        Ok(result) => result,
         Err(e) => {
             return handle_tool_error(
-                anyhow::Error::new(e),
+                e,
                 &cfg,
                 &args.workspace_root,
                 &artifacts_root,
@@ -463,53 +578,10 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
             );
         }
     };
-    let finished = OffsetDateTime::now_utc();
-
-    let report = RunReport {
-        semverguard_version: env!("CARGO_PKG_VERSION").to_string(),
-        started_at: started
-            .format(&Rfc3339)
-            .expect("failed to format start timestamp"),
-        finished_at: finished
-            .format(&Rfc3339)
-            .expect("failed to format finish timestamp"),
-        workspace_root: artifacts.workspace_root,
-        packages: artifacts.packages,
-        summary: artifacts.summary,
-    };
 
     if receipt_requested {
-        let artifact_index = build_artifact_index(
-            &args.workspace_root,
-            &artifacts_root,
-            Some(&report),
-            sarif_requested,
-        );
-
-        // Build capability context using probed git results
-        let capability_ctx =
-            build_capability_context(&cfg, &report, git_available, shallow_clone, git_version);
-
-        let receipt = build_receipt_with_capabilities_versioned(
-            Some(&report),
-            &[],
-            &artifact_index,
-            &cfg.baseline,
-            &args.workspace_root,
-            Some(&capability_ctx),
-            None,
-            &cfg.waivers,
-        );
-
-        // In cockpit mode, exit 0 if receipt write succeeds (even with failures)
         if cfg.mode.is_cockpit() {
-            match write_receipt_bundle(
-                &artifacts_root,
-                &receipt,
-                Some(&report),
-                sarif_requested,
-                cfg.output.pretty_json,
-            ) {
+            match pipeline::write_pipeline_receipt(&pipeline_result, &pipeline_options) {
                 Ok(()) => return Ok(0),
                 Err(e) => {
                     eprintln!("FATAL: failed to write receipt: {e}");
@@ -518,31 +590,16 @@ fn run_check(args: &CheckArgs) -> Result<i32> {
             }
         }
 
-        let write_result = write_receipt_bundle(
-            &artifacts_root,
-            &receipt,
-            Some(&report),
-            sarif_requested,
-            cfg.output.pretty_json,
-        );
-        write_result?;
-        let code = exit_code_from_receipt(
-            &receipt.verdict,
-            cfg.output.warn_as_fail,
-            has_tool_error(&receipt.findings),
-        );
-        return Ok(code);
+        pipeline::write_pipeline_receipt(&pipeline_result, &pipeline_options)?;
+        return Ok(pipeline_result.exit_code);
     }
 
-    // Resolve the run mode (auto-detect from environment if needed)
-    let resolved_mode = cfg.mode.resolve();
-
-    emit_outputs(&cfg, &report)?;
-    Ok(exit_code_from_report(
-        &report,
-        resolved_mode,
-        cfg.output.warn_as_fail,
-    ))
+    let report = pipeline_result
+        .report
+        .as_ref()
+        .expect("pipeline result should include report for non-receipt output");
+    emit_outputs(&cfg, report)?;
+    Ok(pipeline_result.exit_code)
 }
 
 fn handle_tool_error(
@@ -728,28 +785,6 @@ fn indent(s: &str, prefix: &str) -> String {
 // Config Validation
 // =============================================================================
 
-struct ValidationResult {
-    errors: Vec<String>,
-    warnings: Vec<String>,
-}
-
-impl ValidationResult {
-    fn new() -> Self {
-        Self {
-            errors: Vec::new(),
-            warnings: Vec::new(),
-        }
-    }
-
-    fn add_error(&mut self, msg: impl Into<String>) {
-        self.errors.push(msg.into());
-    }
-
-    fn add_warning(&mut self, msg: impl Into<String>) {
-        self.warnings.push(msg.into());
-    }
-}
-
 fn run_validate_config(args: &ValidateConfigArgs) -> Result<()> {
     let cfg_path = args
         .config
@@ -765,7 +800,7 @@ fn run_validate_config(args: &ValidateConfigArgs) -> Result<()> {
     let cfg = config::load_config(&cfg_path)?;
     let result = validate_config(&cfg);
 
-    if result.errors.is_empty() && result.warnings.is_empty() {
+    if result.is_clean() {
         println!("Configuration is valid: {}", cfg_path.display());
         return Ok(());
     }
@@ -794,153 +829,8 @@ fn run_validate_config(args: &ValidateConfigArgs) -> Result<()> {
     Ok(())
 }
 
-fn validate_config(config: &SemverguardConfig) -> ValidationResult {
-    let mut result = ValidationResult::new();
-
-    // Validate glob patterns
-    for (i, pattern) in config.scope.include.iter().enumerate() {
-        if let Err(e) = Glob::new(pattern) {
-            result.add_error(format!(
-                "Invalid glob in scope.include[{}] \"{}\": {}",
-                i, pattern, e
-            ));
-        }
-    }
-
-    for (i, pattern) in config.scope.exclude.iter().enumerate() {
-        if let Err(e) = Glob::new(pattern) {
-            result.add_error(format!(
-                "Invalid glob in scope.exclude[{}] \"{}\": {}",
-                i, pattern, e
-            ));
-        }
-    }
-
-    // Validate baseline configuration
-    match config.baseline.kind {
-        BaselineKind::Git => {
-            if config.baseline.rev.is_none() {
-                result
-                    .add_error("baseline.kind is \"git\" but baseline.rev is not set".to_string());
-            }
-            if config.baseline.version.is_some() {
-                result.add_warning(
-                    "baseline.version is set but baseline.kind is \"git\"; version will be ignored"
-                        .to_string(),
-                );
-            }
-        }
-        BaselineKind::CratesIo => {
-            if config.baseline.rev.is_some() {
-                result.add_warning(
-                    "baseline.rev is set but baseline.kind is \"crates-io\"; rev will be ignored"
-                        .to_string(),
-                );
-            }
-        }
-    }
-
-    // Validate scope mode consistency
-    if config.scope.mode == ScopeMode::Changed {
-        if config.baseline.kind != BaselineKind::Git {
-            result.add_error(
-                "scope.mode is \"changed\" requires baseline.kind = \"git\"".to_string(),
-            );
-        }
-        if config.baseline.rev.is_none() {
-            result
-                .add_error("scope.mode is \"changed\" requires baseline.rev to be set".to_string());
-        }
-    }
-
-    // Validate file paths
-    if let Some(ref root) = config.baseline.root {
-        if !root.exists() {
-            result.add_error(format!("baseline.root does not exist: {}", root.display()));
-        } else if !root.is_dir() {
-            result.add_error(format!(
-                "baseline.root is not a directory: {}",
-                root.display()
-            ));
-        }
-    }
-
-    if let Some(ref rustdoc) = config.baseline.rustdoc {
-        if !rustdoc.exists() {
-            result.add_error(format!(
-                "baseline.rustdoc does not exist: {}",
-                rustdoc.display()
-            ));
-        } else if !rustdoc.is_file() {
-            result.add_error(format!(
-                "baseline.rustdoc is not a file: {}",
-                rustdoc.display()
-            ));
-        }
-    }
-
-    if let Some(ref cargo_bin) = config.engine.cargo_bin {
-        if !cargo_bin.exists() {
-            result.add_warning(format!(
-                "engine.cargo_bin does not exist: {}",
-                cargo_bin.display()
-            ));
-        }
-    }
-
-    // Validate features configuration
-    if config.features.all_features && config.features.only_explicit_features {
-        result.add_warning(
-            "all_features and only_explicit_features both true; all_features takes precedence"
-                .to_string(),
-        );
-    }
-
-    if config.features.only_explicit_features && config.features.features.is_empty() {
-        result.add_warning("only_explicit_features is true but features list is empty".to_string());
-    }
-
-    // Validate waivers
-    for (i, waiver) in config.waivers.iter().enumerate() {
-        // Check fingerprint format (64-char hex)
-        if waiver.fingerprint.len() != 64
-            || !waiver.fingerprint.chars().all(|c| c.is_ascii_hexdigit())
-        {
-            result.add_error(format!(
-                "waivers[{}].fingerprint must be a 64-character hex string, got: {}",
-                i, waiver.fingerprint
-            ));
-        }
-        // Check reason is not empty
-        if waiver.reason.trim().is_empty() {
-            result.add_error(format!("waivers[{}].reason must not be empty", i));
-        }
-        // Warn on expired waivers
-        if let Some(expires) = &waiver.expires {
-            let parts: Vec<&str> = expires.split('-').collect();
-            if parts.len() == 3 {
-                if let (Ok(y), Ok(m), Ok(d)) = (
-                    parts[0].parse::<i32>(),
-                    parts[1].parse::<u8>(),
-                    parts[2].parse::<u8>(),
-                ) {
-                    if let Ok(month) = time::Month::try_from(m) {
-                        if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
-                            let today = time::OffsetDateTime::now_utc().date();
-                            if today > date {
-                                result.add_warning(format!(
-                                    "waivers[{}].expires ({}) has already passed",
-                                    i, expires
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    result
+fn validate_config(config: &SemverguardConfig) -> config::ValidationResult {
+    config::validate_config(config)
 }
 
 // =============================================================================
@@ -964,13 +854,10 @@ fn run_list(args: &ListArgs) -> Result<()> {
         cfg.baseline.rev = Some(rev.clone());
     }
 
-    // Wire adapters (we don't need engine for list)
-    let workspace = CargoMetadataWorkspace::default();
-    let git = GitCli::default();
-    let engine = CargoSemverChecksEngine::default();
-
-    let runner = SemverguardRunner::new(&workspace, Some(&git), &engine);
-    let list_result = runner.list_packages(&args.workspace_root, &cfg)?;
+    let list_result = operations::list(&operations::ListOptions {
+        workspace_root: args.workspace_root.clone(),
+        config: cfg,
+    })?;
 
     if args.json {
         let json = serde_json::to_string_pretty(&list_result)
@@ -1136,14 +1023,8 @@ fn run_promote_baseline(args: &PromoteBaselineArgs) -> Result<()> {
     }
 
     // Resolve the git ref to a full SHA
-    let git = semverguard_git::GitCli::default();
-    let resolved_rev = if args.rev == "HEAD" {
-        git.resolve_head(&args.workspace_root)
-            .context("failed to resolve HEAD - is this a git repository?")?
-    } else {
-        git.resolve_ref(&args.workspace_root, &args.rev)
-            .with_context(|| format!("failed to resolve ref: {}", args.rev))?
-    };
+    let resolved_rev =
+        semverguard_core::promote::resolve_git_revision(&args.workspace_root, &args.rev)?;
 
     let result =
         semverguard_core::promote::promote_git_baseline(&cfg_path, &resolved_rev, args.write)?;
@@ -1364,7 +1245,7 @@ path = "src/lib.rs"
         args.format = Some(FormatOpt::Json);
         args.json = Some(PathBuf::from("report.json"));
 
-        apply_cli_overrides(&mut cfg, &args);
+        apply_cli_overrides(&mut cfg, &args, false);
 
         assert_eq!(cfg.mode, RunMode::Cockpit);
         assert_eq!(cfg.output.format, OutputFormat::Receipt);
@@ -1377,7 +1258,7 @@ path = "src/lib.rs"
         let mut args = base_check_args();
         args.json = Some(PathBuf::from("report.json"));
 
-        apply_cli_overrides(&mut cfg, &args);
+        apply_cli_overrides(&mut cfg, &args, false);
 
         assert_eq!(cfg.output.format, OutputFormat::Both);
         assert_eq!(cfg.output.json_path, Some(PathBuf::from("report.json")));
@@ -1390,7 +1271,7 @@ path = "src/lib.rs"
         args.json = Some(PathBuf::from("report.json"));
         args.sarif = Some(PathBuf::from("report.sarif.json"));
 
-        apply_cli_overrides(&mut cfg, &args);
+        apply_cli_overrides(&mut cfg, &args, false);
 
         assert_eq!(cfg.output.format, OutputFormat::Sarif);
         assert_eq!(
@@ -1412,7 +1293,7 @@ path = "src/lib.rs"
         args.cargo_bin = Some(PathBuf::from("cargo-custom"));
         args.engine_args = vec!["-Z".to_string(), "unstable-options".to_string()];
 
-        apply_cli_overrides(&mut cfg, &args);
+        apply_cli_overrides(&mut cfg, &args, false);
 
         assert_eq!(cfg.scope.mode, ScopeMode::Changed);
         assert_eq!(cfg.baseline.kind, BaselineKind::CratesIo);
@@ -1436,7 +1317,7 @@ path = "src/lib.rs"
         let mut args = base_check_args();
         args.format = Some(FormatOpt::Json);
 
-        apply_cli_overrides(&mut cfg, &args);
+        apply_cli_overrides(&mut cfg, &args, false);
 
         assert_eq!(cfg.output.format, OutputFormat::Json);
     }
@@ -1448,10 +1329,47 @@ path = "src/lib.rs"
         args.mode = Some(RunModeOpt::Cockpit);
         args.sarif = Some(PathBuf::from("report.sarif.json"));
 
-        apply_cli_overrides(&mut cfg, &args);
+        apply_cli_overrides(&mut cfg, &args, false);
 
         assert_eq!(cfg.output.format, OutputFormat::Receipt);
         assert!(cfg.output.json_path.is_none());
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_mode_pr_suggests_changed_with_git_baseline() {
+        let mut cfg = SemverguardConfig::default();
+        let mut args = base_check_args();
+        args.mode = Some(RunModeOpt::Pr);
+        args.baseline_rev = Some("origin/main".to_string());
+
+        apply_cli_overrides(&mut cfg, &args, false);
+
+        assert_eq!(cfg.scope.mode, ScopeMode::Changed);
+        assert_eq!(cfg.baseline.kind, BaselineKind::Git);
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_mode_pr_keeps_workspace_without_git_baseline() {
+        let mut cfg = SemverguardConfig::default();
+        let mut args = base_check_args();
+        args.mode = Some(RunModeOpt::Pr);
+
+        apply_cli_overrides(&mut cfg, &args, false);
+
+        assert_eq!(cfg.scope.mode, ScopeMode::Workspace);
+    }
+
+    #[test]
+    fn test_apply_cli_overrides_respects_explicit_scope_mode_in_config() {
+        let mut cfg = SemverguardConfig::default();
+        cfg.scope.mode = ScopeMode::Workspace;
+        let mut args = base_check_args();
+        args.mode = Some(RunModeOpt::Pr);
+        args.baseline_rev = Some("origin/main".to_string());
+
+        apply_cli_overrides(&mut cfg, &args, true);
+
+        assert_eq!(cfg.scope.mode, ScopeMode::Workspace);
     }
 
     #[test]
@@ -2284,6 +2202,60 @@ include = ["nonexistent-*"]
 
         let code = run_check(&args).expect("run_check text output");
         assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_run_check_pr_mode_skips_when_no_manifest_version_change() {
+        let workspace = write_minimal_workspace();
+        let baseline = init_git_repo(workspace.path());
+        fs::write(
+            workspace.path().join("member").join("src").join("lib.rs"),
+            "pub fn lib() {}\npub fn changed() {}\n",
+        )
+        .expect("update lib.rs");
+        run_git(workspace.path(), &["add", "."]);
+        run_git(workspace.path(), &["commit", "-m", "code-only change"]);
+
+        // If PR-gating fails, this would execute and return a failure code.
+        let fake_cargo = write_fake_cargo(1);
+
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(workspace.path().join("semverguard.toml"));
+        args.mode = Some(RunModeOpt::Pr);
+        args.changed = true;
+        args.baseline_rev = Some(baseline);
+        args.cargo_bin = Some(fake_cargo.path.clone());
+
+        let code = run_check(&args).expect("run_check pr skip");
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn test_run_check_pr_mode_runs_when_manifest_version_changes() {
+        let workspace = write_minimal_workspace();
+        let baseline = init_git_repo(workspace.path());
+
+        let manifest_path = workspace.path().join("member").join("Cargo.toml");
+        let manifest = fs::read_to_string(&manifest_path).expect("read Cargo.toml");
+        let updated = manifest.replace("version = \"0.1.0\"", "version = \"0.2.0\"");
+        fs::write(&manifest_path, updated).expect("write Cargo.toml");
+        run_git(workspace.path(), &["add", "."]);
+        run_git(workspace.path(), &["commit", "-m", "version bump"]);
+
+        // This should run and fail semver checks (exit code 2), not be skipped.
+        let fake_cargo = write_fake_cargo(1);
+
+        let mut args = base_check_args();
+        args.workspace_root = workspace.path().to_path_buf();
+        args.config = Some(workspace.path().join("semverguard.toml"));
+        args.mode = Some(RunModeOpt::Pr);
+        args.changed = true;
+        args.baseline_rev = Some(baseline);
+        args.cargo_bin = Some(fake_cargo.path.clone());
+
+        let code = run_check(&args).expect("run_check pr run");
+        assert_eq!(code, 2);
     }
 
     #[test]

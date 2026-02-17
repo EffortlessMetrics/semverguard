@@ -1,12 +1,17 @@
 [package]
 name = "semverguard-integration-tests"
 version = "0.1.0"
-description = "Integration tests for semverguard."
+description = "Workspace-level integration and BDD tests for semverguard."
 publish = false
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+homepage.workspace = true
+documentation = "https://github.com/EffortlessMetrics/semverguard/tree/main/crates/semverguard-integration-tests"
+keywords.workspace = true
+categories.workspace = true
+readme = "README.md"
 
 [lib]
 # This crate only has tests, no library

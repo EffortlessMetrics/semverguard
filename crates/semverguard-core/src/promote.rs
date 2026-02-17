@@ -83,6 +83,19 @@ pub fn promote_git_baseline(
     Ok(result)
 }
 
+/// Resolve a git ref to a full commit SHA using the default git adapter.
+#[cfg(feature = "default-adapters")]
+pub fn resolve_git_revision(workspace_root: &Path, rev: &str) -> Result<String> {
+    let git = semverguard_git::GitCli::default();
+    if rev == "HEAD" {
+        git.resolve_head(workspace_root)
+            .context("failed to resolve HEAD - is this a git repository?")
+    } else {
+        git.resolve_ref(workspace_root, rev)
+            .with_context(|| format!("failed to resolve ref: {rev}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,15 +1,15 @@
 [package]
 name = "semverguard-cli"
 version = "0.1.0"
-description = "CLI for semverguard - orchestrates cargo-semver-checks across workspaces with filtering, scoping, and machine-readable reports."
+description = "Command-line interface for semverguard workspace checks and reporting."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 homepage.workspace = true
-documentation.workspace = true
+documentation = "https://docs.rs/semverguard-cli"
 keywords.workspace = true
-categories.workspace = true
+categories = ["development-tools", "development-tools::cargo-plugins"]
 readme = "README.md"
 
 [[bin]]
@@ -19,14 +19,9 @@ path = "src/main.rs"
 [dependencies]
 semverguard-core = { version = "0.1.0", path = "../semverguard-core" }
 semverguard-types = { version = "0.1.0", path = "../semverguard-types" }
-semverguard-domain = { version = "0.1.0", path = "../semverguard-domain" }
-semverguard-workspace = { version = "0.1.0", path = "../semverguard-workspace" }
-semverguard-git = { version = "0.1.0", path = "../semverguard-git" }
-semverguard-engine = { version = "0.1.0", path = "../semverguard-engine" }
 
 anyhow = "1.0.101"
 clap = { version = "4.5.57", features = ["derive"] }
-globset = "0.4.18"
 serde_json = "1.0.149"
 indicatif = "0.18.3"
 termcolor = "1.4.1"

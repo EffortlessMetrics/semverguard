@@ -299,9 +299,9 @@ impl ProgressCallbackAdapter {
     }
 }
 
-impl semverguard_domain::ProgressCallback for ProgressCallbackAdapter {
-    fn on_progress(&self, event: semverguard_domain::ProgressEvent) {
-        use semverguard_domain::ProgressEvent as DomainEvent;
+impl semverguard_core::ProgressCallback for ProgressCallbackAdapter {
+    fn on_progress(&self, event: semverguard_core::ProgressEvent) {
+        use semverguard_core::ProgressEvent as DomainEvent;
 
         // Convert domain events to CLI events and report them
         match event {
@@ -350,7 +350,7 @@ impl semverguard_domain::ProgressCallback for ProgressCallbackAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use semverguard_domain::ProgressCallback;
+    use semverguard_core::ProgressCallback;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -524,22 +524,22 @@ mod tests {
         let reporter = RecordingReporter::default();
         let adapter = ProgressCallbackAdapter::new(Box::new(reporter.clone()));
 
-        adapter.on_progress(semverguard_domain::ProgressEvent::TotalPackages { total: 2 });
-        adapter.on_progress(semverguard_domain::ProgressEvent::PackageStarted {
+        adapter.on_progress(semverguard_core::ProgressEvent::TotalPackages { total: 2 });
+        adapter.on_progress(semverguard_core::ProgressEvent::PackageStarted {
             name: "alpha".to_string(),
             index: 0,
             total: 2,
         });
-        adapter.on_progress(semverguard_domain::ProgressEvent::PackageCompleted {
+        adapter.on_progress(semverguard_core::ProgressEvent::PackageCompleted {
             name: "alpha".to_string(),
             status: PackageStatus::Passed,
             duration_ms: 10,
         });
-        adapter.on_progress(semverguard_domain::ProgressEvent::PackageSkipped {
+        adapter.on_progress(semverguard_core::ProgressEvent::PackageSkipped {
             name: "beta".to_string(),
             reason: "filtered".to_string(),
         });
-        adapter.on_progress(semverguard_domain::ProgressEvent::Finished {
+        adapter.on_progress(semverguard_core::ProgressEvent::Finished {
             passed: 1,
             failed: 0,
             skipped: 1,

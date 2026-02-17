@@ -1,7 +1,7 @@
 [package]
 name = "semverguard-domain"
 version = "0.1.0"
-description = "Domain logic and port traits for semverguard - pure orchestration layer."
+description = "Pure semverguard orchestration domain with ports, runner, and failure classification."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

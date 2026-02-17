@@ -3,6 +3,13 @@ name = "semverguard-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
+rust-version = "1.92"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/EffortlessMetrics/semverguard"
+homepage = "https://github.com/EffortlessMetrics/semverguard"
+documentation = "https://docs.rs/semverguard-cli"
+keywords = ["semver", "semantic-versioning", "cargo-semver-checks", "cargo", "ci"]
+categories = ["development-tools", "development-tools::cargo-plugins"]
 
 [package.metadata]
 cargo-fuzz = true

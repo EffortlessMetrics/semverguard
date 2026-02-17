@@ -1,7 +1,7 @@
 [package]
 name = "semverguard-git"
 version = "0.1.0"
-description = "Git adapter for semverguard - detects changed crates via git CLI."
+description = "Git adapter for changed-path detection and baseline revision helpers."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

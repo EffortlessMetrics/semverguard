@@ -1,54 +1,37 @@
 # semverguard-workspace
 
-Workspace adapter for semverguard - reads Cargo workspace structure via `cargo_metadata`.
-
-## Overview
-
-This crate implements the `WorkspaceProvider` trait from `semverguard-domain`, providing workspace and package information by invoking `cargo metadata`.
+`semverguard-workspace` provides the default `WorkspaceProvider` implementation using
+`cargo metadata`.
 
 ## Responsibilities
 
-- Execute `cargo metadata --format-version 1` to discover workspace members
-- Extract package metadata (name, version, publish settings, targets)
-- Filter to workspace members only (exclude transitive dependencies)
-- Detect publishability and library targets
+- Discover workspace root and member crates
+- Return only workspace members (not transitive dependencies)
+- Expose package metadata needed by semverguard filtering:
+  - `name`
+  - `version`
+  - `manifest_path`
+  - `package_root`
+  - `publishable`
+  - `has_lib`
 
 ## Usage
 
-This crate is used internally by `semverguard-cli`:
-
 ```rust
-use semverguard_workspace::CargoMetadataWorkspace;
 use semverguard_domain::WorkspaceProvider;
+use semverguard_workspace::CargoMetadataWorkspace;
 use std::path::Path;
 
-let workspace = CargoMetadataWorkspace::default();
-let metadata = workspace.load(Path::new("/path/to/workspace"))?;
-
-for pkg in &metadata.packages {
-    println!("{}: publishable={}, has_lib={}",
-        pkg.name, pkg.publishable, pkg.has_lib);
-}
+let provider = CargoMetadataWorkspace::default();
+let metadata = provider.load(Path::new("/path/to/workspace"))?;
 ```
 
-## Package Detection
+## Detection Rules
 
-### Publishability
-
-| `Cargo.toml` setting | `publishable` |
-|---------------------|---------------|
-| `publish = false` | `false` |
-| `publish = ["registry"]` | `true` |
-| (unset) | `true` |
-
-### Library Target
-
-A package has `has_lib = true` if:
-- It has a `[lib]` target, OR
-- It's a proc-macro crate
-
-Binary-only crates have `has_lib = false` and are typically filtered out since they have no public API to check.
+- `publishable = false` only when Cargo metadata reports `publish = false`.
+- `has_lib = true` when package targets include `lib` or `proc-macro`.
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](../../LICENSE-APACHE) or [MIT license](../../LICENSE-MIT) at your option.
+Licensed under either [Apache License, Version 2.0](../../LICENSE-APACHE) or
+[MIT license](../../LICENSE-MIT).

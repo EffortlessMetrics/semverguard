@@ -17,6 +17,7 @@ semverguard follows **hexagonal architecture** (ports and adapters), which:
 semverguard/
 ├── crates/
 │   ├── semverguard-cli/       # Binary entry point
+│   ├── semverguard-core/      # Embeddable orchestration + output pipeline
 │   ├── semverguard-domain/    # Core orchestration logic
 │   ├── semverguard-types/     # Shared type definitions
 │   ├── semverguard-workspace/ # Cargo metadata adapter
@@ -30,18 +31,23 @@ semverguard/
 ┌─────────────────────┐
 │   semverguard-cli   │  Binary crate
 │   (entry point)     │  - Argument parsing (clap)
-└─────────┬───────────┘  - Wires adapters together
+└─────────┬───────────┘  - UX/progress/output wiring
           │
           ▼
 ┌─────────────────────┐
-│  semverguard-domain │  Library crate (core logic)
-│    (orchestration)  │  - SemverguardRunner
-└─────────┬───────────┘  - Filtering pipeline
-          │              - Port trait definitions
+│   semverguard-core  │  Library crate
+│  (pipeline facade)  │  - list/probe/pr-gate helpers
+└─────────┬───────────┘  - receipt/comment/SARIF/exit-code
+          │              - default-adapter pipeline wiring
+          ▼
+┌─────────────────────┐
+│  semverguard-domain │  Domain crate
+│    (orchestration)  │  - SemverguardRunner + ports
+└─────────┬───────────┘
           │
-    ┌─────┼─────────────────────────┐
-    │     │                         │
-    ▼     ▼                         ▼
+    ┌─────┼──────────────────────────┐
+    │     │                          │
+    ▼     ▼                          ▼
 ┌───────────────┐  ┌──────────────┐  ┌─────────────────┐
 │ semverguard-  │  │ semverguard- │  │ semverguard-    │
 │   workspace   │  │     git      │  │    engine       │
@@ -59,6 +65,20 @@ semverguard/
 ```
 
 ## Crate Responsibilities
+
+### `semverguard-core`
+
+**Embeddable orchestration facade** used by the CLI and other integrators.
+
+Key components:
+
+- `pipeline`: end-to-end run + receipt writing helpers
+- `operations`: list/probe/PR-gate helpers
+- `config`: config loading + semantic validation
+- `receipt` / `comment` / `sarif` / `exit_code`: output and policy layers
+
+`semverguard-core` depends on `semverguard-domain` and `semverguard-types`, and
+optionally wires default adapters via the `default-adapters` feature.
 
 ### `semverguard-types`
 
@@ -134,7 +154,7 @@ Implements `SemverEngine` by:
 
 ### `semverguard-cli`
 
-**Binary entry point** that wires everything together.
+**Binary entry point** that provides UX on top of `semverguard-core`.
 
 Subcommands:
 
@@ -147,11 +167,10 @@ Responsibilities:
 
 1. Parse CLI arguments (clap)
 2. Load and merge configuration
-3. Instantiate adapters
-4. Create `SemverguardRunner` with adapters
-5. Execute run and format output (text, JSON, SARIF, or receipt)
-6. Display progress (spinner/progress bar) when running interactively
-7. Return appropriate exit code
+3. Call `semverguard-core` operations/pipeline APIs
+4. Execute run and format output (text, JSON, SARIF, or receipt)
+5. Display progress (spinner/progress bar) when running interactively
+6. Return appropriate exit code
 
 ## Why Hexagonal Architecture?
 
@@ -191,6 +210,7 @@ Each crate has a single responsibility:
 
 - `types`: Data structures
 - `domain`: Business rules
+- `core`: Reusable orchestration + output pipeline facade
 - `workspace`/`git`/`engine`: External integrations
 - `cli`: User interface
 
@@ -200,10 +220,10 @@ Each crate has a single responsibility:
 1. CLI parses args, loads config
          │
          ▼
-2. CLI creates SemverguardRunner with adapters
+2. CLI calls `semverguard-core` operations/pipeline APIs
          │
          ▼
-3. Runner.run() called
+3. Core pipeline invokes `SemverguardRunner`
          │
          ├─▶ WorkspaceProvider.load() → WorkspaceMetadata
          │
@@ -217,10 +237,13 @@ Each crate has a single responsibility:
                 SemverEngine.check() → SemverCheckOutput
          │
          ▼
-4. Runner returns RunArtifacts
+4. Domain returns RunArtifacts
          │
          ▼
-5. CLI wraps in RunReport, emits output (text/JSON/SARIF/receipt), returns exit code
+5. Core builds report/receipt/comment/SARIF and computes exit code
+         │
+         ▼
+6. CLI renders outputs and returns process exit code
 ```
 
 ## Error Handling

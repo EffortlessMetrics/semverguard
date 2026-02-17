@@ -1,7 +1,7 @@
 [package]
 name = "semverguard-core"
 version = "0.1.0"
-description = "Embeddable core library for semverguard - pipeline, receipt, comment, SARIF, and exit code logic."
+description = "Reusable semverguard core pipeline for config, receipts, SARIF, comments, and exit codes."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -27,6 +27,7 @@ semverguard-workspace = { version = "0.1.0", path = "../semverguard-workspace", 
 semverguard-git = { version = "0.1.0", path = "../semverguard-git", optional = true }
 semverguard-engine = { version = "0.1.0", path = "../semverguard-engine", optional = true }
 anyhow = "1.0.101"
+globset = "0.4.18"
 hex = "0.4.3"
 semver = "1.0.27"
 serde = { version = "1.0.228", features = ["derive"] }
