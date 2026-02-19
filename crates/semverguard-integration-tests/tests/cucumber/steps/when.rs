@@ -18,3 +18,13 @@ fn validating_config(world: &mut TestWorld) {
     // Config validation happens during run, so we attempt a run
     world.execute_run();
 }
+
+#[when("running pipeline check")]
+fn running_pipeline_check(world: &mut TestWorld) {
+    world.execute_pipeline_run();
+}
+
+#[when("writing pipeline receipt bundle")]
+fn writing_pipeline_receipt_bundle(world: &mut TestWorld) {
+    world.execute_write_pipeline_receipt();
+}

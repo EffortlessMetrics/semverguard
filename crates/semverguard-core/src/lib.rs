@@ -12,6 +12,7 @@
 //! - `default-adapters` (default): Enables the convenience `pipeline::run()` function
 //!   that wires up default adapters (workspace, git, engine).
 
+mod baseline_policy;
 /// Capability context for receipt generation.
 pub mod capability;
 /// PR comment rendering.

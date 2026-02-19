@@ -4,7 +4,7 @@
 //! and proactive git probing.
 
 use crate::receipt::CapabilityContext;
-use semverguard_types::{BaselineKind, FailureKind, PackageStatus, RunReport, SemverguardConfig};
+use semverguard_types::{BaselineKind, FailureKind, RunReport, SemverguardConfig};
 
 /// Build capability context for receipt generation.
 ///
@@ -23,10 +23,13 @@ pub fn build_capability_context(
         None
     };
 
-    // Baseline is available if we didn't have any baseline errors
-    let baseline_available = !report.packages.iter().any(|p| {
-        p.status == PackageStatus::Failed && p.failure_kind == Some(FailureKind::BaselineError)
-    });
+    // Baseline is available if we didn't have any baseline issues.
+    // Baseline warnings can be represented as skipped packages, so we check
+    // failure_kind directly instead of filtering by failed status.
+    let baseline_available = !report
+        .packages
+        .iter()
+        .any(|p| p.failure_kind == Some(FailureKind::BaselineError));
     let baseline_detail = if baseline_available {
         match config.baseline.kind {
             BaselineKind::Git => config.baseline.rev.clone().map(|r| format!("git:{r}")),

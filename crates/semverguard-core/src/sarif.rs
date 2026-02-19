@@ -380,7 +380,11 @@ pub fn report_to_sarif(report: &RunReport) -> SarifLog {
     let results = report
         .packages
         .iter()
-        .filter(|p| p.status == PackageStatus::Failed)
+        .filter(|p| {
+            p.status == PackageStatus::Failed
+                || (p.status == PackageStatus::Skipped
+                    && p.failure_kind == Some(FailureKind::BaselineError))
+        })
         .map(package_to_sarif_result)
         .collect();
 
@@ -1090,6 +1094,39 @@ mod tests {
         // Baseline errors are warnings, not errors
         assert_eq!(result.level, SarifLevel::Warning);
         assert!(result.message.text.contains("Baseline error"));
+    }
+
+    #[test]
+    fn test_skipped_baseline_warning_is_included_in_sarif() {
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![PackageReport {
+                name: "new-lib".to_string(),
+                version: "0.1.0".to_string(),
+                manifest_path: PathBuf::from("/workspace/crates/new-lib/Cargo.toml"),
+                status: PackageStatus::Skipped,
+                skip_reason: Some("baseline warning".to_string()),
+                duration_ms: 50,
+                command: vec!["cargo".to_string()],
+                engine: None,
+                inferred_required_bump: None,
+                failure_kind: Some(FailureKind::BaselineError),
+                baseline_error: None,
+            }],
+            summary: Summary {
+                total: 1,
+                passed: 0,
+                failed: 0,
+                skipped: 1,
+            },
+        };
+
+        let sarif = report_to_sarif(&report);
+        assert_eq!(sarif.runs[0].results.len(), 1);
+        assert_eq!(sarif.runs[0].results[0].rule_id, RULE_BASELINE_ERROR);
     }
 
     // =========================================================================

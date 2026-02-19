@@ -18,6 +18,13 @@ rev = "origin/main"
 # root = "/path/to/baseline"
 # rustdoc = "/path/to/baseline.json"
 
+[baseline.on_error]
+new_crate = "warn"
+missing_revision = "fail"
+shallow_clone = "fail"
+rustdoc_failure = "fail"
+not_published = "warn"
+
 [scope]
 mode = "changed"
 include = ["my-lib-*"]
@@ -83,6 +90,7 @@ Controls the baseline for SemVer comparison—what version to compare against.
 | `rev` | String | — | Git revision for git baseline |
 | `root` | Path | — | Path to baseline workspace root (advanced) |
 | `rustdoc` | Path | — | Path to pre-generated rustdoc JSON (advanced) |
+| `on_error` | Table | see below | Per-cause baseline error policy |
 
 #### `kind`
 
@@ -118,6 +126,32 @@ rev = "v1.0.0"
 #### `root` and `rustdoc`
 
 Advanced options for monorepo setups or CI caching. Passed through to cargo-semver-checks.
+
+#### `[baseline.on_error]`
+
+Controls how specific baseline failure causes are handled:
+
+| Field | Type | Default | Meaning |
+|-------|------|---------|---------|
+| `new_crate` | `"fail"` \| `"warn"` \| `"skip"` | `"warn"` | Crate missing from baseline |
+| `missing_revision` | `"fail"` \| `"warn"` \| `"skip"` | `"fail"` | Baseline git revision not found |
+| `shallow_clone` | `"fail"` \| `"warn"` \| `"skip"` | `"fail"` | Shallow clone cannot resolve baseline |
+| `rustdoc_failure` | `"fail"` \| `"warn"` \| `"skip"` | `"fail"` | Baseline rustdoc generation failed |
+| `not_published` | `"fail"` \| `"warn"` \| `"skip"` | `"warn"` | Crate not published to crates.io |
+
+```toml
+[baseline.on_error]
+new_crate = "skip"
+not_published = "skip"
+missing_revision = "fail"
+shallow_clone = "fail"
+rustdoc_failure = "fail"
+```
+
+Mode interaction:
+- In `pr` and `cockpit`, `fail` is downgraded to `warn`.
+- In `release`, `warn` is upgraded to `fail`.
+- `skip` stays `skip` in every mode.
 
 ---
 
@@ -303,6 +337,13 @@ mode = "auto"
 
 [baseline]
 kind = "crates-io"
+
+[baseline.on_error]
+new_crate = "warn"
+missing_revision = "fail"
+shallow_clone = "fail"
+rustdoc_failure = "fail"
+not_published = "warn"
 
 [scope]
 mode = "workspace"
