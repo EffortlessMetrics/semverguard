@@ -532,7 +532,7 @@ fn build_findings(
     });
 
     for pkg in packages {
-        if pkg.status != PackageStatus::Failed {
+        if !is_finding_relevant_package(pkg) {
             continue;
         }
 
@@ -809,7 +809,7 @@ fn build_raw_log_refs(
 
     let mut raw_logs = Vec::new();
     for pkg in packages {
-        if pkg.status == PackageStatus::Skipped {
+        if !should_emit_raw_logs(pkg) {
             continue;
         }
         let (stdout_path, stderr_path) = raw_log_paths(artifacts_dir, pkg);
@@ -844,7 +844,7 @@ fn write_raw_logs(artifacts_dir: &Path, report: &RunReport) -> anyhow::Result<()
     });
 
     for pkg in packages {
-        if pkg.status == PackageStatus::Skipped {
+        if !should_emit_raw_logs(pkg) {
             continue;
         }
         let (stdout_path, stderr_path) = raw_log_paths(artifacts_dir, pkg);
@@ -876,6 +876,25 @@ fn raw_log_paths(artifacts_dir: &Path, pkg: &PackageReport) -> (PathBuf, PathBuf
         raw_dir.join(format!("{base}.stdout.log")),
         raw_dir.join(format!("{base}.stderr.log")),
     )
+}
+
+fn is_finding_relevant_package(pkg: &PackageReport) -> bool {
+    if pkg.status == PackageStatus::Failed {
+        return true;
+    }
+
+    // Baseline warnings may be represented as skipped packages while still
+    // carrying failure_kind metadata.
+    pkg.status == PackageStatus::Skipped && pkg.failure_kind == Some(FailureKind::BaselineError)
+}
+
+fn should_emit_raw_logs(pkg: &PackageReport) -> bool {
+    if pkg.status != PackageStatus::Skipped {
+        return true;
+    }
+
+    // Keep raw logs for baseline warnings so findings can link to evidence.
+    pkg.failure_kind == Some(FailureKind::BaselineError)
 }
 
 /// Normalize a path to be workspace-root-relative with forward slashes.
@@ -2223,6 +2242,113 @@ mod tests {
             .and_then(|loc| loc.raw_log.as_ref())
             .unwrap();
         assert_eq!(raw_log, "raw/alpha.stdout.log");
+    }
+
+    #[test]
+    fn test_build_findings_includes_skipped_baseline_warning() {
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![PackageReport {
+                name: "alpha".to_string(),
+                version: "1.2.3".to_string(),
+                manifest_path: PathBuf::from("/workspace/alpha/Cargo.toml"),
+                status: PackageStatus::Skipped,
+                skip_reason: Some("baseline warning".to_string()),
+                duration_ms: 1,
+                command: vec![],
+                engine: Some(SemverCheckOutput {
+                    exit_code: Some(2),
+                    success: false,
+                    stdout: String::new(),
+                    stderr: "unknown revision".to_string(),
+                    required_bump: None,
+                }),
+                inferred_required_bump: None,
+                failure_kind: Some(FailureKind::BaselineError),
+                baseline_error: Some(BaselineErrorCause::RevisionNotFound {
+                    rev: "origin/missing".to_string(),
+                }),
+            }],
+            summary: Summary {
+                total: 1,
+                passed: 0,
+                failed: 0,
+                skipped: 1,
+            },
+        };
+
+        let artifacts = ArtifactIndex {
+            report_json: "report.json".to_string(),
+            comment_md: "comment.md".to_string(),
+            sarif_json: None,
+            raw_logs: vec![RawLogRef {
+                package: "alpha".to_string(),
+                version: "1.2.3".to_string(),
+                stdout: Some("raw/alpha.stdout.log".to_string()),
+                stderr: Some("raw/alpha.stderr.log".to_string()),
+            }],
+        };
+
+        let findings = build_findings(&report, &artifacts, report.workspace_root.as_path());
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].check_id, CHECK_BASELINE);
+        assert_eq!(findings[0].level, FindingLevel::Warning);
+    }
+
+    #[test]
+    fn test_build_raw_log_refs_includes_skipped_baseline_warning() {
+        let report = RunReport {
+            semverguard_version: "0.1.0".to_string(),
+            started_at: "2024-01-15T10:00:00Z".to_string(),
+            finished_at: "2024-01-15T10:01:00Z".to_string(),
+            workspace_root: PathBuf::from("/workspace"),
+            packages: vec![
+                PackageReport {
+                    name: "warned".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/warned/Cargo.toml"),
+                    status: PackageStatus::Skipped,
+                    skip_reason: Some("baseline warning".to_string()),
+                    duration_ms: 0,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: Some(FailureKind::BaselineError),
+                    baseline_error: None,
+                },
+                PackageReport {
+                    name: "filtered".to_string(),
+                    version: "1.0.0".to_string(),
+                    manifest_path: PathBuf::from("/workspace/filtered/Cargo.toml"),
+                    status: PackageStatus::Skipped,
+                    skip_reason: Some("filtered".to_string()),
+                    duration_ms: 0,
+                    command: vec![],
+                    engine: None,
+                    inferred_required_bump: None,
+                    failure_kind: None,
+                    baseline_error: None,
+                },
+            ],
+            summary: Summary {
+                total: 2,
+                passed: 0,
+                failed: 0,
+                skipped: 2,
+            },
+        };
+
+        let artifacts = build_artifact_index(
+            Path::new("/workspace"),
+            Path::new("/artifacts"),
+            Some(&report),
+            false,
+        );
+        assert_eq!(artifacts.raw_logs.len(), 1);
+        assert_eq!(artifacts.raw_logs[0].package, "warned");
     }
 
     #[test]

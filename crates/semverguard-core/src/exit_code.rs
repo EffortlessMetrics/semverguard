@@ -19,16 +19,24 @@ pub fn exit_code_from_report(
 ) -> i32 {
     let mut has_tool_error_flag = false;
     let mut has_semver_violation = false;
-    let mut has_baseline_error = false;
+    let mut has_baseline_failure = false;
+    let mut has_baseline_warning = false;
 
     for pkg in &report.packages {
-        if pkg.status != PackageStatus::Failed {
-            continue;
-        }
-        match pkg.failure_kind.unwrap_or(FailureKind::Unknown) {
-            FailureKind::ToolError => has_tool_error_flag = true,
-            FailureKind::BaselineError => has_baseline_error = true,
-            FailureKind::SemverViolation | FailureKind::Unknown => has_semver_violation = true,
+        match pkg.status {
+            PackageStatus::Failed => match pkg.failure_kind.unwrap_or(FailureKind::Unknown) {
+                FailureKind::ToolError => has_tool_error_flag = true,
+                FailureKind::BaselineError => has_baseline_failure = true,
+                FailureKind::SemverViolation | FailureKind::Unknown => has_semver_violation = true,
+            },
+            PackageStatus::Skipped => {
+                // Baseline warnings may be represented as skipped packages
+                // while still retaining baseline classification metadata.
+                if pkg.failure_kind == Some(FailureKind::BaselineError) {
+                    has_baseline_warning = true;
+                }
+            }
+            PackageStatus::Passed => {}
         }
     }
 
@@ -36,7 +44,7 @@ pub fn exit_code_from_report(
         1
     } else if has_semver_violation {
         2
-    } else if has_baseline_error {
+    } else if has_baseline_failure {
         // In Pr mode, baseline errors are warnings (exit 0 unless warn_as_fail is set)
         // In Release mode, baseline errors are failures (exit 3)
         let baseline_errors_are_warnings = resolved_mode.baseline_errors_are_warnings();
@@ -45,6 +53,8 @@ pub fn exit_code_from_report(
         } else {
             3
         }
+    } else if has_baseline_warning {
+        if warn_as_fail { 3 } else { 0 }
     } else {
         0
     }
@@ -101,6 +111,22 @@ mod tests {
         }
     }
 
+    fn baseline_warning_pkg() -> PackageReport {
+        PackageReport {
+            name: "pkg".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: PathBuf::from("/workspace/Cargo.toml"),
+            status: PackageStatus::Skipped,
+            skip_reason: Some("baseline warning".to_string()),
+            duration_ms: 0,
+            command: vec![],
+            engine: None,
+            inferred_required_bump: None,
+            failure_kind: Some(FailureKind::BaselineError),
+            baseline_error: None,
+        }
+    }
+
     #[test]
     fn test_exit_0_on_pass() {
         let report = make_report(vec![]);
@@ -152,6 +178,18 @@ mod tests {
     #[test]
     fn test_exit_3_on_baseline_error_warn_as_fail() {
         let report = make_report(vec![failed_pkg(FailureKind::BaselineError)]);
+        assert_eq!(exit_code_from_report(&report, RunMode::Pr, true), 3);
+    }
+
+    #[test]
+    fn test_exit_0_on_baseline_warning_without_warn_as_fail() {
+        let report = make_report(vec![baseline_warning_pkg()]);
+        assert_eq!(exit_code_from_report(&report, RunMode::Pr, false), 0);
+    }
+
+    #[test]
+    fn test_exit_3_on_baseline_warning_with_warn_as_fail() {
+        let report = make_report(vec![baseline_warning_pkg()]);
         assert_eq!(exit_code_from_report(&report, RunMode::Pr, true), 3);
     }
 }

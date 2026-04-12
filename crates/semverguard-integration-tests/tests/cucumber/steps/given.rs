@@ -2,7 +2,7 @@
 
 use crate::world::{EngineResult, TestWorld};
 use cucumber::given;
-use semverguard_types::{BaselineKind, ScopeMode};
+use semverguard_types::{BaselineKind, ErrorAction, OutputFormat, RunMode, ScopeMode};
 use std::path::PathBuf;
 
 // =============================================================================
@@ -101,6 +101,54 @@ fn baseline_rev_not_set(world: &mut TestWorld) {
     world.config.baseline.kind = BaselineKind::Git;
 }
 
+#[given(expr = "run mode is {string}")]
+fn run_mode(world: &mut TestWorld, mode: String) {
+    world.config.mode = match mode.as_str() {
+        "auto" => RunMode::Auto,
+        "pr" => RunMode::Pr,
+        "release" => RunMode::Release,
+        "cockpit" => RunMode::Cockpit,
+        _ => panic!("Unknown run mode: {}", mode),
+    };
+}
+
+#[given(expr = "warn_as_fail is enabled")]
+fn warn_as_fail_enabled(world: &mut TestWorld) {
+    world.config.output.warn_as_fail = true;
+}
+
+#[given(expr = "warn_as_fail is disabled")]
+fn warn_as_fail_disabled(world: &mut TestWorld) {
+    world.config.output.warn_as_fail = false;
+}
+
+#[given(expr = "output format is {string}")]
+fn output_format(world: &mut TestWorld, format: String) {
+    world.config.output.format = match format.as_str() {
+        "text" => OutputFormat::Text,
+        "json" => OutputFormat::Json,
+        "both" => OutputFormat::Both,
+        "sarif" => OutputFormat::Sarif,
+        "receipt" => OutputFormat::Receipt,
+        _ => panic!("Unknown output format: {}", format),
+    };
+}
+
+#[given(expr = "sarif output is enabled")]
+fn sarif_output_enabled(world: &mut TestWorld) {
+    world.pipeline_sarif = true;
+}
+
+#[given(expr = "sarif output is disabled")]
+fn sarif_output_disabled(world: &mut TestWorld) {
+    world.pipeline_sarif = false;
+}
+
+#[given(expr = "baseline missing_revision action is {string}")]
+fn baseline_missing_revision_action(world: &mut TestWorld, action: String) {
+    world.config.baseline.on_error.missing_revision = parse_error_action(&action);
+}
+
 // =============================================================================
 // Config Setup - Changed Files (using regex to match brackets)
 // =============================================================================
@@ -136,11 +184,7 @@ fn fail_fast_disabled(world: &mut TestWorld) {
 
 #[given(expr = "engine will return {string} for {string}")]
 fn engine_will_return(world: &mut TestWorld, result: String, package: String) {
-    let engine_result = match result.as_str() {
-        "pass" => EngineResult::Pass,
-        "fail" => EngineResult::Fail,
-        _ => EngineResult::Error(format!("Unknown result: {}", result)),
-    };
+    let engine_result = parse_engine_result(&result);
     world.engine_results.insert(package, engine_result);
 }
 
@@ -153,11 +197,7 @@ fn engine_will_return_error(world: &mut TestWorld, error: String, package: Strin
 
 #[given(expr = "all engines return {string}")]
 fn all_engines_return(world: &mut TestWorld, result: String) {
-    world.default_engine_result = match result.as_str() {
-        "pass" => EngineResult::Pass,
-        "fail" => EngineResult::Fail,
-        _ => EngineResult::Error(format!("Unknown result: {}", result)),
-    };
+    world.default_engine_result = parse_engine_result(&result);
 }
 
 // =============================================================================
@@ -170,4 +210,22 @@ fn parse_quoted_list(s: &str) -> Vec<String> {
         .map(|item| item.trim().trim_matches('"').to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+fn parse_engine_result(result: &str) -> EngineResult {
+    match result {
+        "pass" => EngineResult::Pass,
+        "fail" => EngineResult::Fail,
+        "baseline-fail" => EngineResult::BaselineFail,
+        _ => EngineResult::Error(format!("Unknown result: {}", result)),
+    }
+}
+
+fn parse_error_action(action: &str) -> ErrorAction {
+    match action {
+        "fail" => ErrorAction::Fail,
+        "warn" => ErrorAction::Warn,
+        "skip" => ErrorAction::Skip,
+        _ => panic!("Unknown baseline action: {}", action),
+    }
 }

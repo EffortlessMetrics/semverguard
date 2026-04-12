@@ -18,5 +18,5 @@ repository = "https://github.com/EffortlessMetrics/semverguard"
 rust-version = "1.92"
 homepage = "https://github.com/EffortlessMetrics/semverguard"
 documentation = "https://docs.rs/semverguard-cli"
-keywords = ["semver", "versioning", "semantic-versioning", "cargo", "ci"]
-categories = ["development-tools", "development-tools::cargo-plugins"]
+keywords = ["semver", "semantic-versioning", "cargo-semver-checks", "cargo", "ci"]
+categories = ["development-tools"]

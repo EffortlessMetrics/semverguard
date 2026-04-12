@@ -64,6 +64,14 @@ cargo build --release -p semverguard-cli
 
 Pinning versions ensures reproducible builds and prevents unexpected breakage.
 
+### Version compatibility matrix
+
+| semverguard install path | semverguard version | cargo-semver-checks version | Rust toolchain |
+|--------------------------|---------------------|-----------------------------|----------------|
+| GitHub Action (`.github/actions/semverguard`) | configurable (`semverguard-version`) | `0.35.0` default (`cargo-semver-checks-version`) | Runner `stable` toolchain |
+| `cargo install semverguard-cli` | latest released crate | pin explicitly (recommended: `0.35.0`) | toolchain required by installed crate |
+| Build from source (this repository) | workspace tip | pin explicitly (recommended: `0.35.0`) | `1.92+` (`workspace.package.rust-version`) |
+
 ### GitHub Action
 
 Use the `semverguard-version` and `cargo-semver-checks-version` inputs:

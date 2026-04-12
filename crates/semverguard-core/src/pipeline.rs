@@ -139,7 +139,7 @@ pub fn run_with_adapters(
         .as_deref()
         .unwrap_or(env!("CARGO_PKG_VERSION"));
 
-    let report = RunReport {
+    let mut report = RunReport {
         semverguard_version: tool_version.to_string(),
         started_at: started
             .format(&Rfc3339)
@@ -151,6 +151,7 @@ pub fn run_with_adapters(
         packages: artifacts.packages,
         summary: artifacts.summary,
     };
+    crate::baseline_policy::apply_baseline_error_policy(&mut report, &options.config);
 
     let artifact_index = build_artifact_index(
         &options.workspace_root,
@@ -282,7 +283,7 @@ pub fn run(options: &PipelineOptions) -> Result<PipelineResult> {
         .as_deref()
         .unwrap_or(env!("CARGO_PKG_VERSION"));
 
-    let report = RunReport {
+    let mut report = RunReport {
         semverguard_version: tool_version.to_string(),
         started_at: started
             .format(&Rfc3339)
@@ -294,6 +295,7 @@ pub fn run(options: &PipelineOptions) -> Result<PipelineResult> {
         packages: artifacts.packages,
         summary: artifacts.summary,
     };
+    crate::baseline_policy::apply_baseline_error_policy(&mut report, &options.config);
 
     let artifact_index = build_artifact_index(
         &options.workspace_root,
@@ -377,9 +379,9 @@ mod tests {
     use semver::Version;
     use semverguard_domain::{Result as DomainResult, SemverguardError};
     use semverguard_types::{
-        BaselineKind, CapabilityStatus, OutputFormat, RequiredBump, RunMode, ScopeMode,
-        SemverCheckOutput, SemverCheckRequest, SemverguardConfig, VerdictStatus, WorkspaceMetadata,
-        WorkspacePackage,
+        BaselineKind, CapabilityStatus, FailureKind, OutputFormat, PackageStatus, RequiredBump,
+        RunMode, ScopeMode, SemverCheckOutput, SemverCheckRequest, SemverguardConfig,
+        VerdictStatus, WorkspaceMetadata, WorkspacePackage,
     };
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
@@ -431,6 +433,7 @@ mod tests {
     enum EngineOutcome {
         Success,
         SemverFail,
+        BaselineFail,
         Error,
     }
 
@@ -462,6 +465,16 @@ mod tests {
                         stdout: String::new(),
                         stderr: "breaking change".to_string(),
                         required_bump: Some(RequiredBump::Major),
+                    },
+                )),
+                EngineOutcome::BaselineFail => Ok((
+                    vec!["cargo".to_string(), "semver-checks".to_string()],
+                    SemverCheckOutput {
+                        exit_code: Some(2),
+                        success: false,
+                        stdout: String::new(),
+                        stderr: "error: unknown revision 'origin/missing'".to_string(),
+                        required_bump: None,
                     },
                 )),
                 EngineOutcome::Error => Err(SemverguardError::Engine("engine failed".to_string())),
@@ -654,6 +667,41 @@ mod tests {
         let report = result.report.as_ref().unwrap();
         assert_eq!(report.summary.failed, 1);
         assert_eq!(result.receipt.verdict.status, VerdictStatus::Fail);
+    }
+
+    #[test]
+    fn test_run_with_adapters_pr_mode_baseline_failure_becomes_warning_skip() {
+        let dir = tempdir().unwrap();
+        let metadata = basic_metadata(dir.path());
+        let workspace = MockWorkspaceProvider { metadata };
+        let engine = MockEngine {
+            outcome: EngineOutcome::BaselineFail,
+        };
+        let git = NoopGitProvider;
+        let mut config = base_config();
+        config.mode = RunMode::Pr;
+        config.baseline.kind = BaselineKind::Git;
+        config.baseline.rev = Some("origin/main".to_string());
+        config.output.format = OutputFormat::Text;
+
+        let options = PipelineOptions {
+            workspace_root: dir.path().to_path_buf(),
+            config,
+            sarif: false,
+            tool_version: Some("0.0.0-test".to_string()),
+            progress: None,
+        };
+
+        let result = run_with_adapters(&options, &workspace, Some(&git), &engine).unwrap();
+        assert_eq!(result.exit_code, 0);
+        let report = result.report.as_ref().unwrap();
+        assert_eq!(report.summary.failed, 0);
+        assert_eq!(report.summary.skipped, 1);
+        assert_eq!(report.packages[0].status, PackageStatus::Skipped);
+        assert_eq!(
+            report.packages[0].failure_kind,
+            Some(FailureKind::BaselineError)
+        );
     }
 
     #[test]

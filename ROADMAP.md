@@ -11,13 +11,13 @@
 
 The receipt bundle should be the canonical integration API, not legacy JSON.
 
-- [ ] **Canonical artifact structure**
+- [x] **Canonical artifact structure**
   - `artifacts/semverguard/report.json` (sensor envelope)
   - `artifacts/semverguard/comment.md` (deterministic)
-  - `artifacts/semverguard/logs/` (raw logs per crate)
+  - `artifacts/semverguard/raw/` (raw logs per crate)
   - Optional SARIF output
 
-- [ ] **Contract enforcement**
+- [x] **Contract enforcement**
   - Schema validation tests for all output formats
   - Golden output fixtures with deterministic ordering
   - Deterministic ordering guarantees (sort by crate name, etc.)
@@ -26,12 +26,12 @@ The receipt bundle should be the canonical integration API, not legacy JSON.
 
 Classify errors operationally to avoid "false red" killing adoption.
 
-- [ ] **Error taxonomy**
+- [x] **Error taxonomy**
   - `SemverViolation` → Exit 2 (CI policy fail)
   - `ToolError` (engine missing, spawn failure, parse error) → Exit 1 (tool fail)
   - `BaselineError` (rev missing, shallow clone, crate absent) → Configurable behavior
 
-- [ ] **Baseline error handling**
+- [x] **Baseline error handling**
   - Warn/skip in PR lanes for baseline errors
   - Fail in release lanes for baseline errors
   - Clear error messages explaining the baseline issue
@@ -40,17 +40,17 @@ Classify errors operationally to avoid "false red" killing adoption.
 
 Make the tool self-documenting with explicit modes.
 
-- [ ] **PR mode** (`--mode pr`)
+- [x] **PR mode** (`--mode pr`)
   - Skip unless version bump detected or explicit label
   - Baseline errors → warn and skip
   - Default for `changed` scope
 
-- [ ] **Release mode** (`--mode release`)
+- [x] **Release mode** (`--mode release`)
   - Always run
   - Baseline errors → fail
   - Default for `workspace` scope
 
-- [ ] **Mode detection**
+- [x] **Mode detection**
   - Auto-detect from environment (CI_COMMIT_TAG, GITHUB_REF, etc.)
   - Explicit override via `--mode` flag
 
@@ -58,12 +58,12 @@ Make the tool self-documenting with explicit modes.
 
 SARIF output should be credible, not security theater.
 
-- [ ] **Honest location data**
+- [x] **Honest location data**
   - Attach to manifest paths when source spans unavailable
   - Include raw log references
   - Never invent region data
 
-- [ ] **Taxonomy-aligned rules**
+- [x] **Taxonomy-aligned rules**
   - Rules keyed to: semver violation, baseline error, tool error
   - Clear rule descriptions
   - Severity mapping aligned with exit codes
@@ -82,7 +82,7 @@ Make installation boring and deterministic.
   - Artifact upload and SARIF integration
   - One-paste installation
 
-- [ ] **Installation docs**
+- [x] **Installation docs**
   - Clear installation guide
   - Version compatibility matrix
 
@@ -100,7 +100,7 @@ Make installation boring and deterministic.
 - [x] Integration tests
 
 ### Phase 2: Operability
-- [ ] Harden baseline failure taxonomy
+- [x] Harden baseline failure taxonomy
 - [x] Add mode concept (pr/release)
 - [x] Schema validation tests
 - [x] Golden output fixtures
@@ -108,12 +108,17 @@ Make installation boring and deterministic.
 ### Phase 3: Distribution
 - [x] CI workflow for prebuilt binaries
 - [x] GitHub Action
-- [ ] Installation documentation
+- [x] Installation documentation
 
 ### Phase 4: Polish
-- [ ] SARIF honesty improvements
-- [ ] Deterministic ordering enforcement
-- [ ] Per-crate log capture
+- [x] SARIF honesty improvements
+- [x] Deterministic ordering enforcement
+- [x] Per-crate log capture
+
+### Phase 5: Micro-crating
+- [x] Move config validation + scope intent detection into `semverguard-core`
+- [x] Move list/probe/PR-gate helpers into `semverguard-core::operations`
+- [x] Keep `semverguard-cli` focused on argument parsing, UX, and output wiring
 
 ---
 

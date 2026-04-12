@@ -1,79 +1,71 @@
 # semverguard-cli
 
-CLI for semverguard - orchestrates [cargo-semver-checks](https://github.com/obi1kenobi/cargo-semver-checks) across Cargo workspaces with filtering, scoping, and machine-readable reports.
+`semverguard-cli` provides the `semverguard` binary.
 
-## Installation
+It wires the semverguard core/domain crates with default adapters and exposes commands for
+checking, listing, configuration, explanation, and baseline promotion.
 
-```bash
-cargo install semverguard-cli
-```
-
-**Prerequisite:** Install the upstream checker:
+## Install
 
 ```bash
 cargo install cargo-semver-checks
-```
-
-## Usage
-
-```bash
-# Check all packages in workspace
-semverguard check
-
-# Check only changed packages (relative to git baseline)
-semverguard check --baseline-rev origin/main --changed
-
-# Output JSON report
-semverguard check --json report.json
-
-# Output SARIF for GitHub Code Scanning
-semverguard check --sarif results.sarif
-
-# List packages that would be checked (preview filtering)
-semverguard list
-
-# Print effective configuration
-semverguard print-config
-
-# Validate configuration file
-semverguard validate-config
+cargo install semverguard-cli
 ```
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `check` | Run semver checks across the workspace |
-| `list` | List packages that would be checked (dry-run) |
-| `print-config` | Print the effective configuration |
-| `validate-config` | Validate config file for errors/warnings |
+| Command | Purpose |
+| --- | --- |
+| `check` | Run semver checks for selected workspace crates |
+| `list` | Preview package selection without running checks |
+| `print-config` | Print effective config |
+| `validate-config` | Validate config and show warnings/errors |
+| `explain` | Explain finding `check_id`/`code` pairs |
+| `promote-baseline` | Resolve a git ref and update `baseline.rev` |
 
-## Configuration
+## Examples
 
-Create `semverguard.toml` in your workspace root:
+```bash
+# Check all eligible workspace crates
+semverguard check
 
-```toml
-[baseline]
-kind = "git"
-rev = "origin/main"
+# Check only crates changed from origin/main
+semverguard check --changed --baseline-rev origin/main
 
-[scope]
-mode = "changed"
-include = ["*"]
-exclude = []
+# Preview selection only
+semverguard check --dry-run --changed --baseline-rev origin/main
 
-[output]
-format = "both"
-json_path = "semverguard-report.json"
+# Emit JSON and SARIF
+semverguard check --json report.json
+semverguard check --sarif report.sarif
+
+# Receipt artifacts (for cockpit flow)
+semverguard check --format receipt --artifacts-dir artifacts/semverguard
+
+# Explain findings
+semverguard explain
+semverguard explain semver violation --json
+
+# Promote baseline revision in config
+semverguard promote-baseline --rev origin/main --write
 ```
 
 ## Exit Codes
 
-- `0` - All checked crates passed (or baseline errors as warnings in PR mode)
-- `1` - Tool or runtime error (engine missing, config error, etc.)
-- `2` - SemVer policy violation detected
-- `3` - Baseline error (in Release mode) or when `--warn-as-fail` is enabled
+- `0`: success
+- `1`: tool/runtime error
+- `2`: semver violation
+- `3`: baseline error treated as failure
+
+In cockpit mode (`--mode cockpit`), semverguard exits `0` if receipt output is written
+successfully.
+
+## Configuration
+
+By default the CLI reads `./semverguard.toml`. Use `print-config` to inspect effective values
+and `validate-config` to catch invalid or risky settings.
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](../../LICENSE-APACHE) or [MIT license](../../LICENSE-MIT) at your option.
+Licensed under either [Apache License, Version 2.0](../../LICENSE-APACHE) or
+[MIT license](../../LICENSE-MIT).

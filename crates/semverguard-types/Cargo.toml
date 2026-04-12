@@ -1,7 +1,7 @@
 [package]
 name = "semverguard-types"
 version = "0.1.0"
-description = "Shared types (config and report schema) for semverguard."
+description = "Shared schema types for semverguard config, workspace, engine, report, and receipt data."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

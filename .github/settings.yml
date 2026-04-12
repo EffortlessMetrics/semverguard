@@ -3,10 +3,17 @@
 
 repository:
   # Short, specific, human-readable. One sentence.
-  description: "Orchestrates cargo-semver-checks across workspaces with filtering, scoping, and receipts."
+  description: "Runs workspace-level SemVer compatibility checks with scope filtering and CI-friendly outputs."
 
   # Canonical project URL
   homepage: "https://github.com/EffortlessMetrics/semverguard"
 
   # 3-8 tags, lowercase, consistent taxonomy
-  topics: "semver, rust, cargo, ci, monorepo, semver-checks, versioning"
+  topics:
+    - semver
+    - semantic-versioning
+    - cargo-semver-checks
+    - rust
+    - cargo
+    - ci
+    - workspace

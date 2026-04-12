@@ -2,7 +2,7 @@
 
 use crate::world::TestWorld;
 use cucumber::then;
-use semverguard_types::PackageStatus;
+use semverguard_types::{FailureKind, PackageStatus, VerdictStatus};
 
 // =============================================================================
 // Package Count Assertions
@@ -338,5 +338,208 @@ fn would_skip_count(world: &mut TestWorld, count: usize) {
             );
         }
         Err(e) => panic!("Expected successful list, got error: {}", e),
+    }
+}
+
+// =============================================================================
+// Pipeline Assertions
+// =============================================================================
+
+#[then(expr = "pipeline exit code is {int}")]
+fn pipeline_exit_code_is(world: &mut TestWorld, code: i32) {
+    let result = world
+        .pipeline_result
+        .as_ref()
+        .expect("Pipeline result not set");
+    match result {
+        Ok(pipeline) => {
+            assert_eq!(
+                pipeline.exit_code, code,
+                "Expected pipeline exit code {}, got {}",
+                code, pipeline.exit_code
+            );
+        }
+        Err(e) => panic!("Expected successful pipeline run, got error: {}", e),
+    }
+}
+
+#[then(expr = "pipeline report summary shows {int} passed, {int} failed, {int} skipped")]
+fn pipeline_report_summary(world: &mut TestWorld, passed: usize, failed: usize, skipped: usize) {
+    let result = world
+        .pipeline_result
+        .as_ref()
+        .expect("Pipeline result not set");
+    match result {
+        Ok(pipeline) => {
+            let report = pipeline
+                .report
+                .as_ref()
+                .expect("Expected pipeline report to be present");
+            assert_eq!(
+                report.summary.passed, passed,
+                "Expected {} passed, got {}",
+                passed, report.summary.passed
+            );
+            assert_eq!(
+                report.summary.failed, failed,
+                "Expected {} failed, got {}",
+                failed, report.summary.failed
+            );
+            assert_eq!(
+                report.summary.skipped, skipped,
+                "Expected {} skipped, got {}",
+                skipped, report.summary.skipped
+            );
+        }
+        Err(e) => panic!("Expected successful pipeline run, got error: {}", e),
+    }
+}
+
+#[then(expr = "package {string} in pipeline report passed")]
+fn package_in_pipeline_report_passed(world: &mut TestWorld, name: String) {
+    assert_pipeline_package_status(world, &name, PackageStatus::Passed);
+}
+
+#[then(expr = "package {string} in pipeline report failed")]
+fn package_in_pipeline_report_failed(world: &mut TestWorld, name: String) {
+    assert_pipeline_package_status(world, &name, PackageStatus::Failed);
+}
+
+#[then(expr = "package {string} in pipeline report is skipped with reason {string}")]
+fn package_in_pipeline_report_skipped_with_reason(
+    world: &mut TestWorld,
+    name: String,
+    reason: String,
+) {
+    let pkg = find_pipeline_package(world, &name);
+    assert_eq!(
+        pkg.status,
+        PackageStatus::Skipped,
+        "Package '{}' was not skipped (status: {:?})",
+        name,
+        pkg.status
+    );
+    let skip_reason = pkg
+        .skip_reason
+        .as_ref()
+        .expect("Skipped package should have reason");
+    assert!(
+        skip_reason.contains(&reason),
+        "Skip reason '{}' does not contain '{}'",
+        skip_reason,
+        reason
+    );
+}
+
+#[then(expr = "package {string} in pipeline report has failure kind {string}")]
+fn package_in_pipeline_report_has_failure_kind(world: &mut TestWorld, name: String, kind: String) {
+    let expected = parse_failure_kind(&kind);
+    let pkg = find_pipeline_package(world, &name);
+    assert_eq!(
+        pkg.failure_kind,
+        Some(expected),
+        "Package '{}' failure kind mismatch",
+        name
+    );
+}
+
+#[then(expr = "package {string} in pipeline report has no failure kind")]
+fn package_in_pipeline_report_has_no_failure_kind(world: &mut TestWorld, name: String) {
+    let pkg = find_pipeline_package(world, &name);
+    assert!(
+        pkg.failure_kind.is_none(),
+        "Expected package '{}' to have no failure kind, got {:?}",
+        name,
+        pkg.failure_kind
+    );
+}
+
+#[then(expr = "pipeline receipt verdict is {string}")]
+fn pipeline_receipt_verdict_is(world: &mut TestWorld, verdict: String) {
+    let expected = match verdict.as_str() {
+        "pass" => VerdictStatus::Pass,
+        "warn" => VerdictStatus::Warn,
+        "fail" => VerdictStatus::Fail,
+        "skip" => VerdictStatus::Skip,
+        _ => panic!("Unknown verdict status '{}'", verdict),
+    };
+
+    let result = world
+        .pipeline_result
+        .as_ref()
+        .expect("Pipeline result not set");
+    match result {
+        Ok(pipeline) => {
+            assert_eq!(
+                pipeline.receipt.verdict.status, expected,
+                "Expected verdict {:?}, got {:?}",
+                expected, pipeline.receipt.verdict.status
+            );
+        }
+        Err(e) => panic!("Expected successful pipeline run, got error: {}", e),
+    }
+}
+
+#[then("pipeline receipt write succeeds")]
+fn pipeline_receipt_write_succeeds(world: &mut TestWorld) {
+    let result = world
+        .receipt_write_result
+        .as_ref()
+        .expect("Receipt write result not set");
+    match result {
+        Ok(()) => {}
+        Err(e) => panic!("Expected receipt write success, got error: {}", e),
+    }
+}
+
+#[then(expr = "receipt artifact {string} exists")]
+fn receipt_artifact_exists(world: &mut TestWorld, artifact: String) {
+    let path = world.artifacts_dir().join(&artifact);
+    assert!(
+        path.exists(),
+        "Expected receipt artifact '{}' at '{}'",
+        artifact,
+        path.display()
+    );
+}
+
+fn find_pipeline_package<'a>(
+    world: &'a mut TestWorld,
+    name: &str,
+) -> &'a semverguard_types::PackageReport {
+    let result = world
+        .pipeline_result
+        .as_ref()
+        .expect("Pipeline result not set");
+    let pipeline = result
+        .as_ref()
+        .unwrap_or_else(|e| panic!("Expected successful pipeline run, got error: {}", e));
+    let report = pipeline
+        .report
+        .as_ref()
+        .expect("Expected pipeline report to be present");
+    report
+        .packages
+        .iter()
+        .find(|pkg| pkg.name == name)
+        .unwrap_or_else(|| panic!("Package '{}' not found in pipeline report", name))
+}
+
+fn assert_pipeline_package_status(world: &mut TestWorld, name: &str, expected: PackageStatus) {
+    let pkg = find_pipeline_package(world, name);
+    assert_eq!(
+        pkg.status, expected,
+        "Package '{}' status mismatch (expected {:?}, got {:?})",
+        name, expected, pkg.status
+    );
+}
+
+fn parse_failure_kind(kind: &str) -> FailureKind {
+    match kind {
+        "semver-violation" => FailureKind::SemverViolation,
+        "tool-error" => FailureKind::ToolError,
+        "baseline-error" => FailureKind::BaselineError,
+        "unknown" => FailureKind::Unknown,
+        _ => panic!("Unknown failure kind '{}'", kind),
     }
 }

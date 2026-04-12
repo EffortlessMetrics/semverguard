@@ -58,10 +58,10 @@ impl RunMode {
         F: FnMut(&str) -> Option<String>,
     {
         // GitHub Actions: check for tag ref
-        if let Some(github_ref) = get("GITHUB_REF") {
-            if github_ref.starts_with("refs/tags/") {
-                return RunMode::Release;
-            }
+        if let Some(github_ref) = get("GITHUB_REF")
+            && github_ref.starts_with("refs/tags/")
+        {
+            return RunMode::Release;
         }
 
         // GitLab CI: check for commit tag
@@ -70,17 +70,17 @@ impl RunMode {
         }
 
         // GitHub Actions: check for pull_request event
-        if let Some(event_name) = get("GITHUB_EVENT_NAME") {
-            if event_name == "pull_request" || event_name == "pull_request_target" {
-                return RunMode::Pr;
-            }
+        if let Some(event_name) = get("GITHUB_EVENT_NAME")
+            && (event_name == "pull_request" || event_name == "pull_request_target")
+        {
+            return RunMode::Pr;
         }
 
         // GitLab CI: check for merge request pipeline
-        if let Some(source) = get("CI_PIPELINE_SOURCE") {
-            if source == "merge_request_event" {
-                return RunMode::Pr;
-            }
+        if let Some(source) = get("CI_PIPELINE_SOURCE")
+            && source == "merge_request_event"
+        {
+            return RunMode::Pr;
         }
 
         // Azure DevOps: check for pull request
@@ -133,7 +133,7 @@ impl RunMode {
 /// Top-level configuration for semverguard.
 ///
 /// Intended to be loaded from `semverguard.toml`, with CLI flags overriding.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct SemverguardConfig {
     /// Run mode (pr, release, auto).
@@ -161,37 +161,18 @@ pub struct SemverguardConfig {
     pub waivers: Vec<WaiverEntry>,
 }
 
-impl Default for SemverguardConfig {
-    fn default() -> Self {
-        Self {
-            mode: RunMode::default(),
-            baseline: BaselineConfig::default(),
-            scope: ScopeConfig::default(),
-            features: FeaturesConfig::default(),
-            engine: EngineConfig::default(),
-            output: OutputConfig::default(),
-            waivers: vec![],
-        }
-    }
-}
-
 /// Baseline selection kind.
 ///
 /// - `crates-io`: compare against a published version on crates.io (or registries).
 /// - `git`: compare against the workspace state at a git revision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum BaselineKind {
     /// Compare against a released version.
+    #[default]
     CratesIo,
     /// Compare against a git revision.
     Git,
-}
-
-impl Default for BaselineKind {
-    fn default() -> Self {
-        BaselineKind::CratesIo
-    }
 }
 
 /// Baseline configuration.
@@ -341,21 +322,16 @@ impl Default for ScopeConfig {
 }
 
 /// Package selection mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum ScopeMode {
     /// Check all eligible workspace packages.
+    #[default]
     Workspace,
     /// Check only workspace packages that changed relative to the baseline revision.
     ///
     /// Requires `baseline.kind = "git"` and a configured baseline revision.
     Changed,
-}
-
-impl Default for ScopeMode {
-    fn default() -> Self {
-        ScopeMode::Workspace
-    }
 }
 
 /// Feature-selection flags passed through to cargo-semver-checks.
@@ -440,10 +416,11 @@ impl Default for EngineConfig {
 }
 
 /// Output format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum OutputFormat {
     /// Human-readable summary to stdout.
+    #[default]
     Text,
     /// JSON report (to a file or stdout).
     Json,
@@ -458,28 +435,17 @@ pub enum OutputFormat {
     Receipt,
 }
 
-impl Default for OutputFormat {
-    fn default() -> Self {
-        OutputFormat::Text
-    }
-}
-
 /// Color output choice for terminal rendering.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum ColorChoice {
     /// Automatically detect if terminal supports colors.
+    #[default]
     Auto,
     /// Always use colors, even when output is redirected.
     Always,
     /// Never use colors.
     Never,
-}
-
-impl Default for ColorChoice {
-    fn default() -> Self {
-        ColorChoice::Auto
-    }
 }
 
 /// Output verbosity level.

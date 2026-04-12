@@ -12,6 +12,7 @@
 //! - `default-adapters` (default): Enables the convenience `pipeline::run()` function
 //!   that wires up default adapters (workspace, git, engine).
 
+mod baseline_policy;
 /// Capability context for receipt generation.
 pub mod capability;
 /// PR comment rendering.
@@ -22,6 +23,8 @@ pub mod config;
 pub mod exit_code;
 /// Finding code explanation registry.
 pub mod explain;
+/// Adapter-backed operations (list, git probes, PR-mode gate checks).
+pub mod operations;
 /// Pipeline orchestration (run checks -> build receipt -> compute exit code).
 pub mod pipeline;
 /// Baseline promotion logic.
@@ -45,3 +48,4 @@ pub use receipt::{
     write_receipt_bundle,
 };
 pub use receipt_source::{InMemoryReceiptSource, ReceiptEntry};
+pub use semverguard_domain::{ProgressCallback, ProgressEvent};

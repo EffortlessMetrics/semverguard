@@ -1,75 +1,41 @@
 # semverguard-domain
 
-Domain logic and port traits for semverguard - the pure orchestration layer that coordinates workspace scanning, git diffing, and semver checking.
+`semverguard-domain` is the pure orchestration layer for semverguard.
 
-## Overview
+It defines ports for external dependencies and implements `SemverguardRunner`, which performs
+filtering, scoping, and engine execution without depending on concrete git/cargo adapters.
 
-This crate contains:
+## Main Pieces
 
-- **Port traits** (`WorkspaceProvider`, `GitProvider`, `SemverEngine`) - abstractions for external dependencies
-- **`SemverguardRunner`** - the main orchestrator that implements the three-pass filtering strategy
-- **Progress reporting** (`ProgressCallback`, `ProgressEvent`) - abstraction for UI progress updates
-- **Mock implementations** (behind `test-utils` feature) for testing
+- Port traits: `WorkspaceProvider`, `GitProvider`, `SemverEngine`
+- Runner: `SemverguardRunner`
+- Progress API: `ProgressCallback`, `ProgressEvent`
+- Failure classification helpers
+- Test doubles behind `test-utils`
 
-## Architecture
+## Runner Flow
 
-```
-SemverguardRunner
-       │
-       ├── WorkspaceProvider  ← semverguard-workspace adapter
-       ├── GitProvider        ← semverguard-git adapter
-       └── SemverEngine       ← semverguard-engine adapter
-```
+`SemverguardRunner` applies three passes:
 
-## Port Traits
-
-```rust
-pub trait WorkspaceProvider {
-    fn load(&self, workspace_root: &Path) -> Result<WorkspaceMetadata>;
-}
-
-pub trait GitProvider {
-    fn changed_paths(&self, workspace_root: &Path, base: &str, head: &str) -> Result<Vec<PathBuf>>;
-}
-
-pub trait SemverEngine {
-    fn check(&self, request: SemverCheckRequest) -> Result<(Vec<String>, SemverCheckOutput)>;
-}
-```
-
-## Three-Pass Filtering Strategy
-
-1. **Static filters**: include/exclude globs, publishable check, has-lib check
-2. **Scope selection**: workspace mode (all) or changed mode (git-diff based)
-3. **Engine execution**: run semver check per package, collect results
+1. Static filtering (`include`/`exclude`, `skip_publish_false`, `skip_no_lib`, explicit packages)
+2. Scope filtering (`workspace` or `changed` via `GitProvider`)
+3. Engine execution and result classification
 
 ## Usage
 
-This crate is typically used internally by `semverguard-cli`. If building a custom integration:
-
 ```rust
-use semverguard_domain::{SemverguardRunner, WorkspaceProvider, GitProvider, SemverEngine};
-use semverguard_types::SemverguardConfig;
+use semverguard_domain::SemverguardRunner;
 
-// Create adapters
-let workspace = MyWorkspaceProvider::new();
-let git = MyGitProvider::new();
-let engine = MyEngine::new();
-
-// Create runner
-let runner = SemverguardRunner::new(&workspace, Some(&git), &engine);
-
-// Run checks
-let artifacts = runner.run(workspace_root, &config)?;
-
-// Or preview without running
+let runner = SemverguardRunner::new(&workspace_provider, Some(&git_provider), &engine);
+let run_artifacts = runner.run(workspace_root, &config)?;
 let list_result = runner.list_packages(workspace_root, &config)?;
 ```
 
-## Features
+## Feature Flags
 
-- `test-utils` - Enables mock implementations for testing
+- `test-utils`: exports mock providers/engine for tests and integration scenarios
 
 ## License
 
-Licensed under either of [Apache License, Version 2.0](../../LICENSE-APACHE) or [MIT license](../../LICENSE-MIT) at your option.
+Licensed under either [Apache License, Version 2.0](../../LICENSE-APACHE) or
+[MIT license](../../LICENSE-MIT).

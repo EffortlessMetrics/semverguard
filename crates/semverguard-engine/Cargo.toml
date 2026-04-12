@@ -1,7 +1,7 @@
 [package]
 name = "semverguard-engine"
 version = "0.1.0"
-description = "Engine adapter for semverguard - executes cargo-semver-checks."
+description = "Semver engine adapter that runs cargo semver-checks check-release."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

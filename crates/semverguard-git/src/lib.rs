@@ -27,6 +27,32 @@ pub fn parse_diff_output(output: &str) -> Vec<PathBuf> {
         .collect()
 }
 
+fn is_manifest_path(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "Cargo.toml")
+}
+
+fn diff_has_version_change(diff: &str) -> bool {
+    diff.lines().any(|line| {
+        if !(line.starts_with('+') || line.starts_with('-')) {
+            return false;
+        }
+        if line.starts_with("+++") || line.starts_with("---") {
+            return false;
+        }
+
+        let content = line[1..].trim_start();
+        let Some(rest) = content.strip_prefix("version") else {
+            return false;
+        };
+        let rest = rest.trim_start();
+        if !rest.starts_with('=') {
+            return false;
+        }
+        let value = rest[1..].trim_start();
+        value.starts_with('"') || value.starts_with('\'')
+    })
+}
+
 /// Git client backed by the `git` executable on PATH (or a configured path).
 #[derive(Debug, Clone)]
 pub struct GitCli {
@@ -90,6 +116,38 @@ impl GitCli {
         let output = self.run_git(workspace_root, &["rev-parse", refspec])?;
         Ok(output.trim().to_string())
     }
+
+    /// Detect whether any changed `Cargo.toml` contains a changed `version = "..."`
+    /// line between `base...head`.
+    pub fn has_manifest_version_change(
+        &self,
+        workspace_root: &Path,
+        base: &str,
+        head: &str,
+    ) -> Result<bool> {
+        let manifests: Vec<PathBuf> = self
+            .changed_paths(workspace_root, base, head)?
+            .into_iter()
+            .filter(|p| is_manifest_path(p))
+            .collect();
+
+        if manifests.is_empty() {
+            return Ok(false);
+        }
+
+        let range = format!("{base}...{head}");
+        for manifest in manifests {
+            let manifest_arg = manifest.to_string_lossy().into_owned();
+            let diff = self.run_git(
+                workspace_root,
+                &["diff", "--unified=0", &range, "--", &manifest_arg],
+            )?;
+            if diff_has_version_change(&diff) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
 }
 
 impl Default for GitCli {
@@ -113,6 +171,7 @@ impl GitProvider for GitCli {
 mod tests {
     use super::*;
     use std::fs;
+    use std::process::Command;
     use tempfile::TempDir;
 
     #[cfg(unix)]
@@ -131,9 +190,9 @@ mod tests {
         let path = dir.path().join("fake_git.sh");
 
         #[cfg(windows)]
-        let script = "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo git version 2.40.0\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"rev-parse\" if \"%2\"==\"--is-shallow-repository\" (\r\n  echo true\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"rev-parse\" if \"%2\"==\"HEAD\" (\r\n  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"rev-parse\" if \"%2\"==\"bad\" (\r\n  echo unknown ref 1>&2\r\n  exit /b 1\r\n)\r\nif \"%1\"==\"rev-parse\" (\r\n  echo bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"diff\" if \"%2\"==\"--name-only\" (\r\n  echo src/lib.rs\r\n  echo Cargo.toml\r\n  exit /b 0\r\n)\r\necho unknown args 1>&2\r\nexit /b 1\r\n";
+        let script = "@echo off\r\nif \"%1\"==\"--version\" (\r\n  echo git version 2.40.0\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"rev-parse\" if \"%2\"==\"--is-shallow-repository\" (\r\n  echo true\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"rev-parse\" if \"%2\"==\"HEAD\" (\r\n  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"rev-parse\" if \"%2\"==\"bad\" (\r\n  echo unknown ref 1>&2\r\n  exit /b 1\r\n)\r\nif \"%1\"==\"rev-parse\" (\r\n  echo bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"diff\" if \"%2\"==\"--name-only\" (\r\n  echo src/lib.rs\r\n  echo Cargo.toml\r\n  exit /b 0\r\n)\r\nif \"%1\"==\"diff\" if \"%2\"==\"--unified=0\" (\r\n  echo @@ -3 +3 @@\r\n  echo -version = '0.1.0'\r\n  echo +version = '0.2.0'\r\n  exit /b 0\r\n)\r\necho unknown args 1>&2\r\nexit /b 1\r\n";
         #[cfg(not(windows))]
-        let script = "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"git version 2.40.0\"\n  exit 0\nfi\nif [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"--is-shallow-repository\" ]; then\n  echo \"true\"\n  exit 0\nfi\nif [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"HEAD\" ]; then\n  echo \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n  exit 0\nfi\nif [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"bad\" ]; then\n  echo \"unknown ref\" 1>&2\n  exit 1\nfi\nif [ \"$1\" = \"rev-parse\" ]; then\n  echo \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\n  exit 0\nfi\nif [ \"$1\" = \"diff\" ] && [ \"$2\" = \"--name-only\" ]; then\n  echo \"src/lib.rs\"\n  echo \"Cargo.toml\"\n  exit 0\nfi\necho \"unknown args\" 1>&2\nexit 1\n";
+        let script = "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo \"git version 2.40.0\"\n  exit 0\nfi\nif [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"--is-shallow-repository\" ]; then\n  echo \"true\"\n  exit 0\nfi\nif [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"HEAD\" ]; then\n  echo \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n  exit 0\nfi\nif [ \"$1\" = \"rev-parse\" ] && [ \"$2\" = \"bad\" ]; then\n  echo \"unknown ref\" 1>&2\n  exit 1\nfi\nif [ \"$1\" = \"rev-parse\" ]; then\n  echo \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\n  exit 0\nfi\nif [ \"$1\" = \"diff\" ] && [ \"$2\" = \"--name-only\" ]; then\n  echo \"src/lib.rs\"\n  echo \"Cargo.toml\"\n  exit 0\nfi\nif [ \"$1\" = \"diff\" ] && [ \"$2\" = \"--unified=0\" ]; then\n  echo \"@@ -3 +3 @@\"\n  echo \"-version = \\\"0.1.0\\\"\"\n  echo \"+version = \\\"0.2.0\\\"\"\n  exit 0\nfi\necho \"unknown args\" 1>&2\nexit 1\n";
 
         fs::write(&path, script).expect("write fake git script");
 
@@ -205,7 +264,10 @@ mod tests {
             let result = parse_diff_output(input);
             assert_eq!(
                 result,
-                vec![PathBuf::from("  src/lib.rs  "), PathBuf::from("  Cargo.toml\t"),]
+                vec![
+                    PathBuf::from("  src/lib.rs  "),
+                    PathBuf::from("  Cargo.toml\t"),
+                ]
             );
         }
 
@@ -241,6 +303,42 @@ mod tests {
                 result,
                 vec![PathBuf::from("src/lib.rs"), PathBuf::from("Cargo.toml"),]
             );
+        }
+    }
+
+    mod version_change_detection_tests {
+        use super::*;
+
+        #[test]
+        fn detects_version_line_addition() {
+            let diff = "\
+@@ -3 +3 @@
+-version = \"0.1.0\"
++version = \"0.2.0\"
+";
+            assert!(diff_has_version_change(diff));
+        }
+
+        #[test]
+        fn ignores_file_header_lines() {
+            let diff = "\
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1 +1 @@
+-name = \"mycrate\"
++name = \"mycrate2\"
+";
+            assert!(!diff_has_version_change(diff));
+        }
+
+        #[test]
+        fn ignores_dependency_version_keys() {
+            let diff = "\
+@@ -12 +12 @@
+-serde = { version = \"1\" }
++serde = { version = \"1\", features = [\"derive\"] }
+";
+            assert!(!diff_has_version_change(diff));
         }
     }
 
@@ -314,6 +412,56 @@ mod tests {
 
             let err = cli.resolve_ref(root, "bad").unwrap_err();
             assert!(err.to_string().contains("git command failed"));
+        }
+
+        fn run_git(repo: &Path, args: &[&str]) -> String {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(repo)
+                .output()
+                .expect("run git");
+            assert!(
+                output.status.success(),
+                "git {:?} failed: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout).trim().to_string()
+        }
+
+        #[test]
+        fn has_manifest_version_change_true_when_manifest_bumped_in_repo() {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let root = dir.path();
+
+            fs::create_dir_all(root.join("src")).expect("create src");
+            fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+            )
+            .expect("write Cargo.toml");
+            fs::write(root.join("src/lib.rs"), "pub fn lib() {}\n").expect("write lib.rs");
+
+            run_git(root, &["init"]);
+            run_git(root, &["config", "user.email", "test@example.com"]);
+            run_git(root, &["config", "user.name", "Test User"]);
+            run_git(root, &["add", "."]);
+            run_git(root, &["commit", "-m", "initial"]);
+            let baseline = run_git(root, &["rev-parse", "HEAD"]);
+
+            fs::write(
+                root.join("Cargo.toml"),
+                "[package]\nname = \"pkg\"\nversion = \"0.2.0\"\nedition = \"2021\"\n",
+            )
+            .expect("update Cargo.toml");
+            run_git(root, &["add", "."]);
+            run_git(root, &["commit", "-m", "version bump"]);
+
+            let cli = GitCli::default();
+            let changed = cli
+                .has_manifest_version_change(root, &baseline, "HEAD")
+                .expect("version check");
+            assert!(changed);
         }
     }
 }

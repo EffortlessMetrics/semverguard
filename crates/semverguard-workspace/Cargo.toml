@@ -1,7 +1,7 @@
 [package]
 name = "semverguard-workspace"
 version = "0.1.0"
-description = "Workspace adapter for semverguard - reads Cargo workspace via cargo_metadata."
+description = "Workspace adapter that loads Cargo members via cargo metadata."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
