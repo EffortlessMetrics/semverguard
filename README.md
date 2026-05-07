@@ -1,5 +1,11 @@
 # semverguard
 
+[![CI](https://github.com/EffortlessMetrics/semverguard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EffortlessMetrics/semverguard/actions/workflows/ci.yml)
+[![Coverage](https://github.com/EffortlessMetrics/semverguard/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/EffortlessMetrics/semverguard/actions/workflows/coverage.yml)
+[![Codecov](https://codecov.io/gh/EffortlessMetrics/semverguard/branch/main/graph/badge.svg)](https://codecov.io/gh/EffortlessMetrics/semverguard)
+[![MSRV](https://img.shields.io/badge/MSRV-1.92-blue.svg)](Cargo.toml)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
+
 `semverguard` is a Rust orchestration layer around
 [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) for Cargo workspaces.
 
