@@ -12,6 +12,8 @@
 It does not re-implement SemVer analysis. It selects packages, runs upstream checks, and
 normalizes outputs for CI.
 
+Codecov is Rust execution-surface telemetry only; see [Coverage](docs/ci/coverage.md) for what the badge does and does not claim.
+
 ## What It Does
 
 - Check every eligible workspace crate or only crates changed from a git baseline.
