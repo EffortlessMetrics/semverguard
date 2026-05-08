@@ -1,10 +1,18 @@
 # semverguard
 
+[![CI](https://github.com/EffortlessMetrics/semverguard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EffortlessMetrics/semverguard/actions/workflows/ci.yml)
+[![Coverage](https://github.com/EffortlessMetrics/semverguard/actions/workflows/coverage.yml/badge.svg?branch=main)](https://github.com/EffortlessMetrics/semverguard/actions/workflows/coverage.yml)
+[![Codecov](https://codecov.io/gh/EffortlessMetrics/semverguard/branch/main/graph/badge.svg)](https://codecov.io/gh/EffortlessMetrics/semverguard)
+[![MSRV](https://img.shields.io/badge/MSRV-1.92-blue.svg)](Cargo.toml)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
+
 `semverguard` is a Rust orchestration layer around
 [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) for Cargo workspaces.
 
 It does not re-implement SemVer analysis. It selects packages, runs upstream checks, and
 normalizes outputs for CI.
+
+Codecov is Rust execution-surface telemetry only; see [Coverage](docs/ci/coverage.md) for what the badge does and does not claim.
 
 ## What It Does
 
