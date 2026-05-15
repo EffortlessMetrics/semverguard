@@ -387,7 +387,7 @@ mod tests {
             let cli = GitCli::new(Some(fake.path.clone()));
             let root = fake._dir.path();
 
-            assert_eq!(cli.is_shallow(root).unwrap(), true);
+            assert!(cli.is_shallow(root).unwrap());
             assert_eq!(
                 cli.resolve_head(root).unwrap(),
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"

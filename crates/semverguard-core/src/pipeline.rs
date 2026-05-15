@@ -199,9 +199,9 @@ pub fn run_with_adapters(
 /// Convenience: run with default adapters (feature-gated).
 #[cfg(feature = "default-adapters")]
 pub fn run(options: &PipelineOptions) -> Result<PipelineResult> {
-    let workspace = semverguard_workspace::CargoMetadataWorkspace::default();
+    let workspace = semverguard_workspace::CargoMetadataWorkspace;
     let git = semverguard_git::GitCli::default();
-    let engine = semverguard_engine::CargoSemverChecksEngine::default();
+    let engine = semverguard_engine::CargoSemverChecksEngine;
 
     // Probe shallow clone
     let shallow_clone = git.is_shallow(&options.workspace_root).unwrap_or(false);

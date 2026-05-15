@@ -122,11 +122,10 @@ members = [{}]
                 "publish = false\n"
             };
             let target_section = if *has_lib {
-                format!(
-                    r#"[lib]
+                r#"[lib]
 path = "src/lib.rs"
 "#
-                )
+                .to_string()
             } else {
                 format!(
                     r#"[[bin]]

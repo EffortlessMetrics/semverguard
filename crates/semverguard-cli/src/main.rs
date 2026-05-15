@@ -366,10 +366,10 @@ fn apply_cli_overrides(
     }
 
     // Only apply format override if not in cockpit mode (cockpit forces receipt)
-    if !cfg.mode.is_cockpit() {
-        if let Some(fmt) = &args.format {
-            cfg.output.format = fmt.clone().into();
-        }
+    if !cfg.mode.is_cockpit()
+        && let Some(fmt) = &args.format
+    {
+        cfg.output.format = fmt.clone().into();
     }
 
     if let Some(json_path) = &args.json {
@@ -914,10 +914,7 @@ fn run_explain(args: &ExplainArgs) -> Result<()> {
                 );
             } else {
                 println!("Finding types:\n");
-                println!(
-                    "{:<16} {:<16} {:<8} {}",
-                    "CHECK_ID", "CODE", "LEVEL", "TITLE"
-                );
+                println!("{:<16} {:<16} {:<8} TITLE", "CHECK_ID", "CODE", "LEVEL");
                 println!("{}", "-".repeat(72));
                 for entry in explain::all() {
                     println!(

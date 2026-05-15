@@ -9,20 +9,15 @@ use std::io::IsTerminal;
 use std::time::Duration;
 
 /// Progress display choice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ProgressChoice {
     /// Automatically show progress if stderr is a TTY.
+    #[default]
     Auto,
     /// Always show progress bar/spinner.
     Always,
     /// Never show progress (simple line output instead).
     Never,
-}
-
-impl Default for ProgressChoice {
-    fn default() -> Self {
-        ProgressChoice::Auto
-    }
 }
 
 /// Events that can be reported to the progress tracker.
@@ -471,8 +466,8 @@ mod tests {
 
     #[test]
     fn test_progress_defaults_construct() {
-        let _noop = NoopProgress::default();
-        let _line = LineProgress::default();
+        let _noop = NoopProgress;
+        let _line = LineProgress;
         let _terminal = TerminalProgress::default();
     }
 

@@ -20,3 +20,8 @@ homepage = "https://github.com/EffortlessMetrics/semverguard"
 documentation = "https://docs.rs/semverguard-cli"
 keywords = ["semver", "semantic-versioning", "cargo-semver-checks", "cargo", "ci"]
 categories = ["development-tools"]
+
+[workspace.lints.clippy]
+# Style-only lints that landed in stable clippy after the codebase was written.
+# Allowed at workspace level to keep CI green without churn; revisit individually.
+field_reassign_with_default = "allow"

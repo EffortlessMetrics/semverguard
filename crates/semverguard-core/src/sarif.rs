@@ -515,9 +515,8 @@ fn package_to_sarif_result(pkg: &PackageReport) -> SarifResult {
             duration_ms: Some(pkg.duration_ms),
             // Include raw log references for debugging
             raw_stderr_log: pkg.engine.as_ref().map(|_| {
-                format!(
-                    "Run with --format receipt to generate raw logs in artifacts/semverguard/raw/"
-                )
+                "Run with --format receipt to generate raw logs in artifacts/semverguard/raw/"
+                    .to_string()
             }),
             raw_stdout_log: None,
             failure_kind: Some(failure_kind_str(failure_kind).to_string()),

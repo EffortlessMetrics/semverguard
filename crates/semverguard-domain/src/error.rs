@@ -103,10 +103,7 @@ mod tests {
         let err: SemverguardError = io_err.into();
         assert_eq!(
             std::mem::discriminant(&err),
-            std::mem::discriminant(&SemverguardError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                ""
-            )))
+            std::mem::discriminant(&SemverguardError::Io(std::io::Error::other("")))
         );
         assert!(format!("{err}").contains("access denied"));
     }
@@ -140,6 +137,7 @@ mod tests {
     // =========================================================================
 
     #[test]
+    #[allow(clippy::unnecessary_literal_unwrap)]
     fn test_result_ok() {
         let result: Result<i32> = Ok(42);
         assert!(result.is_ok());
@@ -147,6 +145,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::unnecessary_literal_unwrap)]
     fn test_result_err() {
         let result: Result<i32> = Err(SemverguardError::InvalidConfig("bad config".to_string()));
         assert!(result.is_err());

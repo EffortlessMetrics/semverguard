@@ -14,7 +14,7 @@ fn workspace_with_packages(world: &mut TestWorld, step: &cucumber::gherkin::Step
     if let Some(table) = step.table.as_ref() {
         for row in table.rows.iter().skip(1) {
             // Skip header row
-            let name = row.get(0).map(|s| s.as_str()).unwrap_or("");
+            let name = row.first().map(|s| s.as_str()).unwrap_or("");
             let version = row.get(1).map(|s| s.as_str()).unwrap_or("1.0.0");
             let publishable = row.get(2).map(|s| s == "true").unwrap_or(true);
             let has_lib = row.get(3).map(|s| s == "true").unwrap_or(true);

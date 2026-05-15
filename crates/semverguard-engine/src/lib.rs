@@ -27,9 +27,7 @@ impl CargoSemverChecksEngine {
             .clone()
             .unwrap_or_else(|| PathBuf::from("cargo"));
 
-        let mut args: Vec<String> = Vec::new();
-        args.push("semver-checks".into());
-        args.push("check-release".into());
+        let mut args: Vec<String> = vec!["semver-checks".into(), "check-release".into()];
 
         // Strongly prefer explicit manifest path: makes workspace selection deterministic.
         args.push("--manifest-path".into());
@@ -1279,7 +1277,7 @@ Major version bump required.
 
     #[test]
     fn test_cargo_semver_checks_engine_default() {
-        let engine = CargoSemverChecksEngine::default();
+        let engine = CargoSemverChecksEngine;
         // Just verify it can be created
         assert!(format!("{:?}", engine).contains("CargoSemverChecksEngine"));
     }
