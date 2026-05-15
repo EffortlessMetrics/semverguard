@@ -1229,6 +1229,11 @@ path = "src/lib.rs"
         run_git(repo, &["init"]);
         run_git(repo, &["config", "user.email", "test@example.com"]);
         run_git(repo, &["config", "user.name", "Test User"]);
+        // Defensive: some environments (CI runners, local dev containers) set
+        // commit.gpgsign or tag.gpgsign globally. Override at repo scope so
+        // these tests do not depend on host signing infrastructure.
+        run_git(repo, &["config", "commit.gpgsign", "false"]);
+        run_git(repo, &["config", "tag.gpgsign", "false"]);
         run_git(repo, &["add", "."]);
         run_git(repo, &["commit", "-m", "initial"]);
         run_git(repo, &["rev-parse", "HEAD"])
