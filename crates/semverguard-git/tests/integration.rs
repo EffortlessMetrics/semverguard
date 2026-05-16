@@ -38,6 +38,10 @@ fn create_temp_repo() -> TempDir {
     git_ok(path, &["init"]);
     git_ok(path, &["config", "user.email", "test@example.com"]);
     git_ok(path, &["config", "user.name", "Test User"]);
+    // Defensive: some hosts set commit.gpgsign globally; force off at repo
+    // scope so this test does not depend on signing infrastructure.
+    git_ok(path, &["config", "commit.gpgsign", "false"]);
+    git_ok(path, &["config", "tag.gpgsign", "false"]);
 
     // Create initial file and commit
     fs::write(path.join("README.md"), "# Test Repo").expect("failed to write README");
