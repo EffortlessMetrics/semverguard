@@ -480,12 +480,10 @@ fn package_to_sarif_result(pkg: &PackageReport) -> SarifResult {
         .as_ref()
         .map(|e| e.stderr.trim())
         .filter(|s| !s.is_empty())
-        .map(|s| {
-            if s.len() > 200 {
-                format!("{}...", &s[..200])
-            } else {
-                s.to_string()
-            }
+        .map(|s| match s.char_indices().nth(200) {
+            // Slice at a char boundary to avoid panicking on multi-byte UTF-8.
+            Some((idx, _)) => format!("{}...", &s[..idx]),
+            None => s.to_string(),
         });
 
     // Build the message with stderr context when available
@@ -517,9 +515,8 @@ fn package_to_sarif_result(pkg: &PackageReport) -> SarifResult {
             duration_ms: Some(pkg.duration_ms),
             // Include raw log references for debugging
             raw_stderr_log: pkg.engine.as_ref().map(|_| {
-                format!(
-                    "Run with --format receipt to generate raw logs in artifacts/semverguard/raw/"
-                )
+                "Run with --format receipt to generate raw logs in artifacts/semverguard/raw/"
+                    .to_string()
             }),
             raw_stdout_log: None,
             failure_kind: Some(failure_kind_str(failure_kind).to_string()),
@@ -1515,6 +1512,41 @@ mod tests {
         let props = result.properties.as_ref().unwrap();
         assert!(props.raw_stderr_log.is_some());
         assert!(result.message.text.contains("minor version bump"));
+    }
+
+    #[test]
+    fn test_package_report_multibyte_stderr_truncation_does_not_panic() {
+        // 250x 🎉 (4 bytes each) = 1000 bytes, 250 chars. Truncating at
+        // character index 200 corresponds to byte index 800, which is a valid
+        // char boundary. The previous implementation sliced at byte index 200 —
+        // mid-codepoint — and panicked. The regression here is that no panic
+        // occurs and the truncation lands on a UTF-8 boundary.
+        let stderr = "\u{1f389}".repeat(250);
+        let pkg = PackageReport {
+            name: "lib-utf8".to_string(),
+            version: "1.0.0".to_string(),
+            manifest_path: PathBuf::from("/workspace/lib-utf8/Cargo.toml"),
+            status: PackageStatus::Failed,
+            skip_reason: None,
+            duration_ms: 1,
+            command: vec![],
+            engine: Some(SemverCheckOutput {
+                exit_code: Some(1),
+                success: false,
+                stdout: String::new(),
+                stderr,
+                required_bump: Some(RequiredBump::Major),
+            }),
+            inferred_required_bump: Some(RequiredBump::Major),
+            failure_kind: Some(FailureKind::SemverViolation),
+            baseline_error: None,
+        };
+
+        let result = package_to_sarif_result(&pkg);
+        assert!(result.message.text.contains("Engine output:"));
+        assert!(result.message.text.ends_with("..."));
+        let expected_snippet: String = "\u{1f389}".repeat(200);
+        assert!(result.message.text.contains(&expected_snippet));
     }
 
     #[test]

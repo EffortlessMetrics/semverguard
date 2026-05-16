@@ -387,7 +387,7 @@ mod tests {
             let cli = GitCli::new(Some(fake.path.clone()));
             let root = fake._dir.path();
 
-            assert_eq!(cli.is_shallow(root).unwrap(), true);
+            assert!(cli.is_shallow(root).unwrap());
             assert_eq!(
                 cli.resolve_head(root).unwrap(),
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -442,9 +442,13 @@ mod tests {
             .expect("write Cargo.toml");
             fs::write(root.join("src/lib.rs"), "pub fn lib() {}\n").expect("write lib.rs");
 
-            run_git(root, &["init"]);
+            run_git(root, &["init", "-b", "main"]);
             run_git(root, &["config", "user.email", "test@example.com"]);
             run_git(root, &["config", "user.name", "Test User"]);
+            // Defensive: some environments set commit.gpgsign globally; force
+            // it off at repo scope so the test does not need host signing keys.
+            run_git(root, &["config", "commit.gpgsign", "false"]);
+            run_git(root, &["config", "tag.gpgsign", "false"]);
             run_git(root, &["add", "."]);
             run_git(root, &["commit", "-m", "initial"]);
             let baseline = run_git(root, &["rev-parse", "HEAD"]);

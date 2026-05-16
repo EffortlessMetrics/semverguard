@@ -218,6 +218,9 @@ impl GitProvider for MockGitProvider {
     }
 }
 
+/// A canned (args, output) result the mock engine can return.
+type EngineCheckResult = Result<(Vec<String>, SemverCheckOutput)>;
+
 /// Records a call to [`MockSemverEngine::check`].
 #[derive(Debug, Clone)]
 pub struct SemverCheckCall {
@@ -254,9 +257,9 @@ pub struct SemverCheckCall {
 #[derive(Debug)]
 pub struct MockSemverEngine {
     /// Queue of results to return from successive `check` calls.
-    results: Mutex<Vec<Result<(Vec<String>, SemverCheckOutput)>>>,
+    results: Mutex<Vec<EngineCheckResult>>,
     /// Default result when queue is empty.
-    default_result: Mutex<Option<Result<(Vec<String>, SemverCheckOutput)>>>,
+    default_result: Mutex<Option<EngineCheckResult>>,
     /// Recorded calls for verification.
     calls: Mutex<Vec<SemverCheckCall>>,
 }

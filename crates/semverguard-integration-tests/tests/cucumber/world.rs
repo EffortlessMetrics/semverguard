@@ -77,9 +77,10 @@ pub struct PipelineRunResult {
 }
 
 /// Result configuration for the mock engine.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum EngineResult {
     /// Package passes semver check.
+    #[default]
     Pass,
     /// Package fails semver check.
     Fail,
@@ -87,12 +88,6 @@ pub enum EngineResult {
     BaselineFail,
     /// Engine returns an error.
     Error(String),
-}
-
-impl Default for EngineResult {
-    fn default() -> Self {
-        EngineResult::Pass
-    }
 }
 
 impl TestWorld {
@@ -173,13 +168,13 @@ impl TestWorld {
         let results: Vec<_> = self
             .packages
             .iter()
-            .filter_map(|pkg| {
+            .map(|pkg| {
                 let result = self
                     .engine_results
                     .get(&pkg.name)
                     .cloned()
                     .unwrap_or_else(|| self.default_engine_result.clone());
-                Some(engine_result_to_output(&result))
+                engine_result_to_output(&result)
             })
             .collect();
 

@@ -333,6 +333,7 @@ pub fn build_receipt_with_capabilities(
 }
 
 /// Build a receipt with an optional tool version override and waivers.
+#[allow(clippy::too_many_arguments)]
 pub fn build_receipt_with_capabilities_versioned(
     report: Option<&RunReport>,
     errors: &[ToolErrorFinding],
@@ -369,7 +370,7 @@ pub fn build_receipt_with_capabilities_versioned(
         });
     }
 
-    findings.sort_by(|a, b| finding_sort_key(a).cmp(&finding_sort_key(b)));
+    findings.sort_by_key(finding_sort_key);
 
     apply_waivers(&mut findings, waivers);
 
@@ -712,18 +713,16 @@ fn is_waiver_expired(waiver: &WaiverEntry) -> bool {
             let today = time::OffsetDateTime::now_utc().date();
             // Try simple YYYY-MM-DD parsing
             let parts: Vec<&str> = date_str.split('-').collect();
-            if parts.len() == 3 {
-                if let (Ok(y), Ok(m), Ok(d)) = (
+            if parts.len() == 3
+                && let (Ok(y), Ok(m), Ok(d)) = (
                     parts[0].parse::<i32>(),
                     parts[1].parse::<u8>(),
                     parts[2].parse::<u8>(),
-                ) {
-                    if let Ok(month) = time::Month::try_from(m) {
-                        if let Ok(expires_date) = time::Date::from_calendar_date(y, month, d) {
-                            return today > expires_date;
-                        }
-                    }
-                }
+                )
+                && let Ok(month) = time::Month::try_from(m)
+                && let Ok(expires_date) = time::Date::from_calendar_date(y, month, d)
+            {
+                return today > expires_date;
             }
             false // Can't parse = not expired
         }

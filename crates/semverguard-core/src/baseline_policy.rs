@@ -89,10 +89,10 @@ fn baseline_detail(pkg: &PackageReport) -> String {
         return cause.to_string();
     }
 
-    if let Some(reason) = &pkg.skip_reason {
-        if !reason.trim().is_empty() {
-            return reason.clone();
-        }
+    if let Some(reason) = &pkg.skip_reason
+        && !reason.trim().is_empty()
+    {
+        return reason.clone();
     }
 
     if let Some(engine) = &pkg.engine {

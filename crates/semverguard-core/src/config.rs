@@ -171,13 +171,13 @@ pub fn validate_config(config: &SemverguardConfig) -> ValidationResult {
         }
     }
 
-    if let Some(ref cargo_bin) = config.engine.cargo_bin {
-        if !cargo_bin.exists() {
-            result.warnings.push(format!(
-                "engine.cargo_bin does not exist: {}",
-                cargo_bin.display()
-            ));
-        }
+    if let Some(ref cargo_bin) = config.engine.cargo_bin
+        && !cargo_bin.exists()
+    {
+        result.warnings.push(format!(
+            "engine.cargo_bin does not exist: {}",
+            cargo_bin.display()
+        ));
     }
 
     // Validate features configuration
@@ -214,22 +214,20 @@ pub fn validate_config(config: &SemverguardConfig) -> ValidationResult {
         // Warn on expired waivers
         if let Some(expires) = &waiver.expires {
             let parts: Vec<&str> = expires.split('-').collect();
-            if parts.len() == 3 {
-                if let (Ok(y), Ok(m), Ok(d)) = (
+            if parts.len() == 3
+                && let (Ok(y), Ok(m), Ok(d)) = (
                     parts[0].parse::<i32>(),
                     parts[1].parse::<u8>(),
                     parts[2].parse::<u8>(),
-                ) {
-                    if let Ok(month) = time::Month::try_from(m) {
-                        if let Ok(date) = time::Date::from_calendar_date(y, month, d) {
-                            let today = time::OffsetDateTime::now_utc().date();
-                            if today > date {
-                                result.warnings.push(format!(
-                                    "waivers[{i}].expires ({expires}) has already passed"
-                                ));
-                            }
-                        }
-                    }
+                )
+                && let Ok(month) = time::Month::try_from(m)
+                && let Ok(date) = time::Date::from_calendar_date(y, month, d)
+            {
+                let today = time::OffsetDateTime::now_utc().date();
+                if today > date {
+                    result.warnings.push(format!(
+                        "waivers[{i}].expires ({expires}) has already passed"
+                    ));
                 }
             }
         }

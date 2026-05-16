@@ -108,9 +108,9 @@ pub fn build_pr_mode_skipped_report(
 /// Run package listing with default adapters.
 #[cfg(feature = "default-adapters")]
 pub fn list(options: &ListOptions) -> Result<ListResult> {
-    let workspace = semverguard_workspace::CargoMetadataWorkspace::default();
+    let workspace = semverguard_workspace::CargoMetadataWorkspace;
     let git = semverguard_git::GitCli::default();
-    let engine = semverguard_engine::CargoSemverChecksEngine::default();
+    let engine = semverguard_engine::CargoSemverChecksEngine;
     list_with_adapters(options, &workspace, Some(&git), &engine)
 }
 

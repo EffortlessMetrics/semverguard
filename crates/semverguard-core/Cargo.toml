@@ -42,3 +42,6 @@ insta = "1.43.2"
 jsonschema = "0.41.0"
 regex-lite = "0.1.9"
 tempfile = "3.24.0"
+
+[lints]
+workspace = true

@@ -76,10 +76,10 @@ pub fn classify_engine_error_detailed(
     let err_str = err.to_string().to_ascii_lowercase();
 
     // Check for baseline-related errors in the error message
-    if err_str.contains("baseline") || err_str.contains("revision") {
-        if let Some(cause) = detect_baseline_error_from_message(&err_str, crate_name) {
-            return ClassificationResult::baseline(cause);
-        }
+    if (err_str.contains("baseline") || err_str.contains("revision"))
+        && let Some(cause) = detect_baseline_error_from_message(&err_str, crate_name)
+    {
+        return ClassificationResult::baseline(cause);
     }
 
     ClassificationResult::simple(FailureKind::ToolError)

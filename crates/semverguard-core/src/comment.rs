@@ -49,9 +49,11 @@ pub fn render_comment(receipt: &SensorReportV1) -> String {
             .packages
             .iter()
             .filter(|p| p.status == PackageStatus::Failed)
-            .filter(|p| match p.failure_kind {
-                Some(FailureKind::BaselineError) | Some(FailureKind::ToolError) => false,
-                _ => true,
+            .filter(|p| {
+                !matches!(
+                    p.failure_kind,
+                    Some(FailureKind::BaselineError) | Some(FailureKind::ToolError)
+                )
             })
             .collect::<Vec<_>>();
         failed.sort_by(|a, b| {

@@ -230,7 +230,7 @@ impl<'a> SemverguardRunner<'a> {
 
                     self.progress.on_progress(ProgressEvent::PackageCompleted {
                         name: pkg.name.clone(),
-                        status: status.clone(),
+                        status,
                         duration_ms,
                     });
 
@@ -627,6 +627,8 @@ mod tests {
     };
     use std::cell::RefCell;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    type EngineCheckResult = Result<(Vec<String>, SemverCheckOutput)>;
     use std::sync::{Arc, Mutex};
 
     // =========================================================================
@@ -702,20 +704,20 @@ mod tests {
     /// Mock semver engine that returns controlled output.
     struct MockSemverEngine {
         /// Results to return for each call, in order.
-        results: RefCell<Vec<Result<(Vec<String>, SemverCheckOutput)>>>,
+        results: RefCell<Vec<EngineCheckResult>>,
         /// Number of times check was called.
         call_count: AtomicUsize,
     }
 
     impl MockSemverEngine {
-        fn new(results: Vec<Result<(Vec<String>, SemverCheckOutput)>>) -> Self {
+        fn new(results: Vec<EngineCheckResult>) -> Self {
             Self {
                 results: RefCell::new(results),
                 call_count: AtomicUsize::new(0),
             }
         }
 
-        fn success_result() -> Result<(Vec<String>, SemverCheckOutput)> {
+        fn success_result() -> EngineCheckResult {
             Ok((
                 vec!["cargo".to_string(), "semver-checks".to_string()],
                 SemverCheckOutput {
@@ -728,7 +730,7 @@ mod tests {
             ))
         }
 
-        fn failure_result() -> Result<(Vec<String>, SemverCheckOutput)> {
+        fn failure_result() -> EngineCheckResult {
             Ok((
                 vec!["cargo".to_string(), "semver-checks".to_string()],
                 SemverCheckOutput {
@@ -741,7 +743,7 @@ mod tests {
             ))
         }
 
-        fn engine_error() -> Result<(Vec<String>, SemverCheckOutput)> {
+        fn engine_error() -> EngineCheckResult {
             Err(SemverguardError::Engine(
                 "cargo-semver-checks not found".to_string(),
             ))
@@ -753,7 +755,7 @@ mod tests {
     }
 
     impl SemverEngine for MockSemverEngine {
-        fn check(&self, _request: SemverCheckRequest) -> Result<(Vec<String>, SemverCheckOutput)> {
+        fn check(&self, _request: SemverCheckRequest) -> EngineCheckResult {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             let mut results = self.results.borrow_mut();
             if results.is_empty() {
@@ -2559,13 +2561,11 @@ mod tests {
         let _ = runner.run(Path::new("/workspace"), &config).unwrap();
 
         let events = events.lock().unwrap();
-        assert!(events.iter().any(|e| {
-            if let ProgressEvent::Finished { .. } = e {
-                true
-            } else {
-                false
-            }
-        }));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ProgressEvent::Finished { .. }))
+        );
     }
 
     #[test]
@@ -2591,13 +2591,11 @@ mod tests {
         let _ = runner.run(Path::new("/workspace"), &config).unwrap();
 
         let events = events.lock().unwrap();
-        assert!(events.iter().any(|e| {
-            if let ProgressEvent::PackageStarted { .. } = e {
-                true
-            } else {
-                false
-            }
-        }));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ProgressEvent::PackageStarted { .. }))
+        );
     }
 
     #[test]

@@ -100,7 +100,7 @@ impl InMemoryReceiptSource {
             .filter(|e| !is_reserved(&normalize_path(&e.path)))
             .collect();
 
-        entries.sort_by(|a, b| normalize_path(&a.path).cmp(&normalize_path(&b.path)));
+        entries.sort_by_key(|e| normalize_path(&e.path));
         entries
     }
 
