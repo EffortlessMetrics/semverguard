@@ -1226,7 +1226,7 @@ path = "src/lib.rs"
     }
 
     fn init_git_repo(repo: &Path) -> String {
-        run_git(repo, &["init"]);
+        run_git(repo, &["init", "-b", "main"]);
         run_git(repo, &["config", "user.email", "test@example.com"]);
         run_git(repo, &["config", "user.name", "Test User"]);
         // Defensive: some environments (CI runners, local dev containers) set

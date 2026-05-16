@@ -35,7 +35,7 @@ fn create_temp_repo() -> TempDir {
     let dir = TempDir::new().expect("failed to create temp dir");
     let path = dir.path();
 
-    git_ok(path, &["init"]);
+    git_ok(path, &["init", "-b", "main"]);
     git_ok(path, &["config", "user.email", "test@example.com"]);
     git_ok(path, &["config", "user.name", "Test User"]);
     // Defensive: some hosts set commit.gpgsign globally; force off at repo

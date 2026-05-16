@@ -442,7 +442,7 @@ mod tests {
             .expect("write Cargo.toml");
             fs::write(root.join("src/lib.rs"), "pub fn lib() {}\n").expect("write lib.rs");
 
-            run_git(root, &["init"]);
+            run_git(root, &["init", "-b", "main"]);
             run_git(root, &["config", "user.email", "test@example.com"]);
             run_git(root, &["config", "user.name", "Test User"]);
             // Defensive: some environments set commit.gpgsign globally; force
